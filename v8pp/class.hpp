@@ -435,12 +435,15 @@ public:
 		using namespace detail;
 		detail::object_registry<Traits>& class_info = classes::find<Traits>(isolate, type_id<T>());
 		v8::Local<v8::Object> wrapped_object = class_info.find_v8_object(Traits::key(const_cast<T*>(&obj)));
-		if (wrapped_object.IsEmpty() && class_info.auto_wrap_objects())
+		if constexpr(!std::is_abstract<T>::value)
 		{
-			object_pointer_type clone = Traits::clone(obj);
-			if (clone)
+			if (wrapped_object.IsEmpty() && class_info.auto_wrap_objects())
 			{
-				wrapped_object = class_info.wrap_object(clone, true);
+				object_pointer_type clone = Traits::clone(obj);
+				if (clone)
+				{
+					wrapped_object = class_info.wrap_object(clone, true);
+				}
 			}
 		}
 		return wrapped_object;
