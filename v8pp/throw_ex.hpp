@@ -14,6 +14,7 @@ v8::Local<v8::Value> throw_ex(v8::Isolate* isolate, std::string_view str);
 v8::Local<v8::Value> throw_ex(v8::Isolate* isolate, std::string_view str,
 	v8::Local<v8::Value> (*exception_ctor)(v8::Local<v8::String>));
 
+v8::Local<v8::Value> throw_error(v8::Isolate* isolate, std::string_view str);
 } // namespace v8pp
 
 #if V8PP_HEADER_ONLY
