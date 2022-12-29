@@ -1,10 +1,11 @@
 /bin/
+out/
 /docs/html/
 /docs/xml/
 /node_modules/
 /packages/
 /examples/*/build/
-/.vs
+.vs/
 /*.*sdf
 /*.suo
 /*.VC.db
