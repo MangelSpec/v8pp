@@ -222,12 +222,25 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 template<typename Traits>
 V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args)
 {
-	if (!ctor_)
+	if (ctor_.empty())
 	{
 		//assert(false && "create not allowed");
 		throw std::runtime_error(class_name() + " has no constructor");
 	}
-	return wrap_object(ctor_(args), true);
+
+	// TODO: find correct ctor by argument types instead of trying all
+	for (const auto& ctor : ctor_)
+	{
+		try
+		{
+			return wrap_object(ctor(args), true);
+		}
+		catch (const std::exception& ex)
+		{
+		}
+	}
+
+	throw std::runtime_error(class_name() + " has no fitting constructor");
 }
 
 template<typename Traits>

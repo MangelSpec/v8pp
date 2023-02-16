@@ -65,7 +65,7 @@ public:
 	void set_auto_wrap_objects(bool auto_wrap) { auto_wrap_objects_ = auto_wrap; }
 	bool auto_wrap_objects() const { return auto_wrap_objects_; }
 
-	void set_ctor(ctor_function&& ctor) { ctor_ = std::move(ctor); }
+	void set_ctor(ctor_function&& ctor) { ctor_.emplace_back(std::move(ctor)); }
 
 	void add_base(object_registry& info, cast_function cast);
 	bool cast(pointer_type& ptr, type_info const& actual_type) const;
@@ -109,7 +109,7 @@ private:
 	v8::Global<v8::FunctionTemplate> func_;
 	v8::Global<v8::FunctionTemplate> js_func_;
 
-	ctor_function ctor_;
+	std::vector<ctor_function> ctor_;
 	dtor_function dtor_;
 	bool auto_wrap_objects_;
 };
