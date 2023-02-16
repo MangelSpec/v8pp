@@ -44,6 +44,11 @@ struct invalid_argument : std::invalid_argument
 	invalid_argument(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* expected_type);
 };
 
+struct runtime_error : std::runtime_error
+{
+	runtime_error(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* message);
+};
+
 // converter specializations for string types
 template<typename String>
 struct convert<String, typename std::enable_if<detail::is_string<String>::value>::type>
@@ -80,11 +85,19 @@ struct convert<String, typename std::enable_if<detail::is_string<String>::value>
 		if constexpr (sizeof(Char) == 1)
 		{
 			v8::String::Utf8Value const str(isolate, value);
+			if (str.length() == 0 && *str == nullptr)
+			{
+				throw runtime_error(isolate, value, "toString conversation failed");
+			}
 			return from_type(reinterpret_cast<Char const*>(*str), str.length());
 		}
 		else
 		{
 			v8::String::Value const str(isolate, value);
+			if (str.length() == 0 && *str == nullptr)
+			{
+				throw runtime_error(isolate, value, "toString conversation failed");
+			}
 			return from_type(reinterpret_cast<Char const*>(*str), str.length());
 		}
 	}
@@ -985,6 +998,13 @@ v8::Local<T> to_local(v8::Isolate* isolate, v8::PersistentBase<T> const& handle)
 inline invalid_argument::invalid_argument(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* expected_type)
 	: std::invalid_argument(std::string("expected ")
 		+ expected_type
+		+ ", typeof="
+		+ (value.IsEmpty() ? std::string("<empty>") : v8pp::from_v8<std::string>(isolate, value->TypeOf(isolate))))
+{
+}
+
+inline runtime_error::runtime_error(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* message)
+	: std::runtime_error(std::string("runtime error: ") + message
 		+ ", typeof="
 		+ (value.IsEmpty() ? std::string("<empty>") : v8pp::from_v8<std::string>(isolate, value->TypeOf(isolate))))
 {
