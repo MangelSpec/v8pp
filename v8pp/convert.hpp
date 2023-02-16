@@ -67,7 +67,7 @@ struct convert<String, typename std::enable_if<detail::is_string<String>::value>
 
 	static bool is_valid(v8::Isolate*, v8::Local<v8::Value> value)
 	{
-		return !value.IsEmpty() && (value->IsString() || value->IsNumber() || value->IsObject());
+		return !value.IsEmpty();
 	}
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
@@ -79,12 +79,12 @@ struct convert<String, typename std::enable_if<detail::is_string<String>::value>
 
 		if constexpr (sizeof(Char) == 1)
 		{
-			v8::String::Utf8Value const str(isolate, value->IsObject() ? value.As<v8::Object>()->ToString(isolate->GetCurrentContext()).ToLocalChecked().As<v8::Value>() : value);
+			v8::String::Utf8Value const str(isolate, value);
 			return from_type(reinterpret_cast<Char const*>(*str), str.length());
 		}
 		else
 		{
-			v8::String::Value const str(isolate, value->IsObject() ? value.As<v8::Object>()->ToString(isolate->GetCurrentContext()).ToLocalChecked().As<v8::Value>() : value);
+			v8::String::Value const str(isolate, value);
 			return from_type(reinterpret_cast<Char const*>(*str), str.length());
 		}
 	}
