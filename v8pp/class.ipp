@@ -70,6 +70,7 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 	// each JavaScript instance has 2 internal fields:
 	//  0 - pointer to a wrapped C++ object
 	//  1 - pointer to this object_registry
+	js_func->InstanceTemplate()->SetInternalFieldCount(2);
 	func->InstanceTemplate()->SetInternalFieldCount(2);
 	func->Inherit(js_func);
 }
@@ -185,6 +186,35 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::find_v8_object(pointer_
 }
 
 template<typename Traits>
+V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, bool call_dtor)
+{
+	auto it = objects_.find(object);
+	if (it != objects_.end())
+	{
+		//assert(false && "duplicate object");
+		throw std::runtime_error(class_name()
+			+ " duplicate object " + pointer_str(Traits::pointer_id(object)));
+	}
+
+	v8::EscapableHandleScope scope(isolate_);
+	assert(obj->InternalFieldCount() == 2);
+	obj->SetAlignedPointerInInternalField(0, Traits::pointer_id(object));
+	obj->SetAlignedPointerInInternalField(1, this);
+
+	v8::Global<v8::Object> pobj(isolate_, obj);
+	pobj.SetWeak(this, [](v8::WeakCallbackInfo<object_registry> const& data)
+		{
+			object_id object = data.GetInternalField(0);
+			object_registry* this_ = static_cast<object_registry*>(data.GetInternalField(1));
+			this_->remove_object(object);
+		}, v8::WeakCallbackType::kInternalFields);
+	objects_.emplace(object, wrapped_object{ std::move(pobj), call_dtor });
+	
+
+	return scope.Escape(obj);
+}
+
+template<typename Traits>
 V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_type const& object, bool call_dtor)
 {
 	auto it = objects_.find(object);
@@ -233,9 +263,9 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(v8::Functio
 	{
 		try
 		{
-			return wrap_object(ctor(args), true);
+			return wrap_this(args.This(), ctor(args), true);
 		}
-		catch (const std::exception& ex)
+		catch (const std::exception&)
 		{
 		}
 	}

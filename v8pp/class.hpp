@@ -76,6 +76,7 @@ public:
 	pointer_type find_object(object_id id, type_info const& actual_type) const;
 	v8::Local<v8::Object> find_v8_object(pointer_type const& ptr) const;
 
+	v8::Local<v8::Object> wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, bool call_dtor);
 	v8::Local<v8::Object> wrap_object(pointer_type const& object, bool call_dtor);
 	v8::Local<v8::Object> wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args);
 	pointer_type unwrap_object(v8::Local<v8::Value> value);
@@ -276,10 +277,9 @@ public:
 		else
 		{
 			wrapped_fun = wrap_function_template<Function, Traits>(isolate(), std::forward<Function>(func));
-			class_info_.js_function_template()->Set(v8_name, wrapped_fun, attr);
 		}
 
-		class_info_.class_function_template()->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
+		class_info_.js_function_template()->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
 		return *this;
 	}
 
@@ -297,7 +297,7 @@ public:
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr));
-		class_info_.class_function_template()->PrototypeTemplate()
+		class_info_.js_function_template()->PrototypeTemplate()
 			->SetAccessor(v8_name,
 				&member_get<attribute_type>, &member_set<attribute_type>,
 				data,
@@ -336,7 +336,7 @@ public:
 		v8::AccessorSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::String> v8_name = v8pp::to_v8(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
-		class_info_.class_function_template()->PrototypeTemplate()
+		class_info_.js_function_template()->PrototypeTemplate()
 			->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
 		return *this;
 	}
@@ -347,7 +347,7 @@ public:
 	{
 		v8::HandleScope scope(isolate());
 
-		class_info_.class_function_template()->PrototypeTemplate()
+		class_info_.js_function_template()->PrototypeTemplate()
 			->Set(v8pp::to_v8(isolate(), name), to_v8(isolate(), value),
 				v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
 		return *this;
