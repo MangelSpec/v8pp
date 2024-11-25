@@ -95,6 +95,10 @@ else()
 	endif()
 endif()
 
+if(V8PP_PRETTIFY_TYPENAMES)
+	target_compile_definitions(v8pp PRIVATE V8PP_PRETTIFY_TYPENAMES=1)
+endif()
+
 #source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${V8PP_HEADERS} ${V8PP_SOURCES})
 
 # Install
