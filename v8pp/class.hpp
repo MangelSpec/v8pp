@@ -84,6 +84,20 @@ public:
 
 	std::unordered_map<std::string, std::function<v8::Local<v8::Value>(v8::Isolate*, pointer_type)>> const_properties;
 
+	void apply_const_properties(v8::Isolate* isolate, v8::Local<v8::Object> obj, pointer_type const& ext)
+	{
+		// Set constant properties
+		for (const auto& base : bases_)
+		{
+			base.info.apply_const_properties(isolate, obj, ext);
+		}
+
+		for (const auto& [name, func] : const_properties)
+		{
+			v8pp::set_const(isolate, obj, name, func(isolate, ext));
+		}
+	}
+
 private:
 	struct wrapped_object
 	{
@@ -360,8 +374,8 @@ public:
 		// Store the native function for the constant property in object_registry
 		class_info_.const_properties.emplace(name, [get = std::move(get)](v8::Isolate* isolate, pointer_type obj)
 			{
-		T* typed_obj = static_cast<T*>(obj);
-		return to_v8(isolate, (typed_obj->*get)()); });
+				T* typed_obj = static_cast<T*>(obj);
+				return to_v8(isolate, (typed_obj->*get)()); });
 		return *this;
 	}
 
@@ -423,13 +437,7 @@ public:
 		using namespace detail;
 		auto& class_info = classes::find<Traits>(isolate, type_id<T>());
 		v8::Local<v8::Object> obj = class_info.wrap_object(ext, true);
-
-		// Set constant properties
-		for (const auto& [name, func] : class_info.const_properties)
-		{
-			v8pp::set_const(isolate, obj, name, func(isolate, ext));
-		}
-
+		class_info.apply_const_properties(isolate, obj, ext);
 		return obj;
 	}
 
