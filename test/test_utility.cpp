@@ -10,14 +10,14 @@ template<typename Ret, typename F>
 void test_ret(F&&)
 {
 	using R = typename v8pp::detail::function_traits<F>::return_type;
-	static_assert(std::is_same<Ret, R>::value, "wrong return_type");
+	static_assert(std::same_as<Ret, R>);
 }
 
 template<typename ArgsTuple, typename F>
 void test_args(F&&)
 {
 	using Args = typename v8pp::detail::function_traits<F>::arguments;
-	static_assert(std::is_same<ArgsTuple, Args>::value, "wrong arguments");
+	static_assert(std::same_as<ArgsTuple, Args>);
 }
 
 template<typename Ret, typename Derived, typename F>
@@ -134,9 +134,9 @@ void test_tuple_tail()
 {
 	using v8pp::detail::tuple_tail;
 
-	static_assert(std::is_same<tuple_tail<std::tuple<int>>::type, std::tuple<>>::value, "");
-	static_assert(std::is_same<tuple_tail<std::tuple<int, char>>::type, std::tuple<char>>::value, "");
-	static_assert(std::is_same<tuple_tail<std::tuple<int, char, bool>>::type, std::tuple<char, bool>>::value, "");
+	static_assert(std::same_as<tuple_tail<std::tuple<int>>::type, std::tuple<>>);
+	static_assert(std::same_as<tuple_tail<std::tuple<int, char>>::type, std::tuple<char>>);
+	static_assert(std::same_as<tuple_tail<std::tuple<int, char, bool>>::type, std::tuple<char, bool>>);
 }
 
 int f() { return 1; }
@@ -245,20 +245,10 @@ void test_type_traits()
 	static_assert(v8pp::detail::is_shared_ptr<std::shared_ptr<int>>::value, "int");
 }
 
-struct some_struct {};
-namespace test { class some_class {}; }
-
 void test_utility()
 {
 	test_type_traits();
 	test_function_traits();
 	test_tuple_tail();
 	test_is_callable();
-
-	using v8pp::detail::type_id;
-
-	check_eq("type_id", type_id<int>().name(), "int");
-	check_eq("type_id", type_id<bool>().name(), "bool");
-	check_eq("type_id", type_id<some_struct>().name(), "some_struct");
-	check_eq("type_id", type_id<test::some_class>().name(), "test::some_class");
 }

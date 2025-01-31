@@ -1,10 +1,9 @@
 #include "v8pp/class.hpp"
 
+#include <cassert>
 #include <cstdio> // for snprintf
 
-namespace v8pp {
-
-namespace detail {
+namespace v8pp::detail {
 
 static V8PP_IMPL std::string pointer_str(void const* ptr)
 {
@@ -56,7 +55,20 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 			object_registry* this_ = external_data::get<object_registry*>(args.Data());
 			try
 			{
-				return args.GetReturnValue().Set(this_->wrap_object(args));
+				v8::TryCatch try_catch(isolate);
+				auto wrapped = this_->wrap_object(args);
+				if (try_catch.HasCaught())
+				{
+					args.GetReturnValue().Set(try_catch.ReThrow());
+				}
+				else if (wrapped.IsEmpty())
+				{
+					args.GetReturnValue().Set(throw_ex(isolate, "wrapped nullptr"));
+				}
+				else
+				{
+					return args.GetReturnValue().Set(wrapped);
+				}
 			}
 			catch (std::exception const& ex)
 			{
@@ -217,6 +229,11 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 template<typename Traits>
 V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_type const& object, bool call_dtor)
 {
+	if (!object)
+	{
+		return {};
+	}
+
 	auto it = objects_.find(object);
 	if (it != objects_.end())
 	{
@@ -442,7 +459,9 @@ V8PP_IMPL classes* classes::instance(operation op, v8::Isolate* isolate)
 	return nullptr; // should never reach this line
 }
 
-} // namespace detail
+} // namespace v8pp::detail
+
+namespace v8pp {
 
 V8PP_IMPL void cleanup(v8::Isolate* isolate)
 {

@@ -1,5 +1,4 @@
-#ifndef V8PP_MODULE_HPP_INCLUDED
-#define V8PP_MODULE_HPP_INCLUDED
+#pragma once
 
 #include <v8.h>
 
@@ -69,7 +68,7 @@ public:
 	template<typename Function, typename Traits = raw_ptr_traits>
 	module& function(std::string_view name, Function&& func)
 	{
-		using Fun = typename std::decay<Function>::type;
+		using Fun = typename std::decay_t<Function>;
 		static_assert(detail::is_callable<Fun>::value, "Function must be callable");
 		return value(name, wrap_function_template<Function, Traits>(isolate_, std::forward<Function>(func)));
 	}
@@ -81,17 +80,11 @@ public:
 		static_assert(!detail::is_callable<Variable>::value, "Variable must not be callable");
 		v8::HandleScope scope(isolate_);
 
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 1)
-		obj_->SetAccessor(v8pp::to_v8(isolate_, name),
-			&var_get<Variable>, &var_set<Variable>,
-			detail::external_data::set(isolate_, &var),
-			v8::PropertyAttribute(v8::DontDelete));
-#else
-		obj_->SetAccessor(v8pp::to_v8(isolate_, name),
-			&var_get<Variable>, &var_set<Variable>,
-			detail::external_data::set(isolate_, &var),
-			v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
-#endif
+		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate_, name);
+		v8::AccessorNameGetterCallback getter = &var_get<Variable>;
+		v8::AccessorNameSetterCallback setter = &var_set<Variable>;
+		v8::Local<v8::Value> data = detail::external_data::set(isolate_, &var);
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
 		return *this;
 	}
 
@@ -99,26 +92,23 @@ public:
 	template<typename GetFunction, typename SetFunction = detail::none>
 	module& property(char const* name, GetFunction&& get, SetFunction&& set = {})
 	{
-		using Getter = typename std::decay<GetFunction>::type;
-		using Setter = typename std::decay<SetFunction>::type;
+		using Getter = typename std::decay_t<GetFunction>;
+		using Setter = typename std::decay_t<SetFunction>;
+
 		static_assert(detail::is_callable<Getter>::value, "GetFunction must be callable");
 		static_assert(detail::is_callable<Setter>::value
-			|| std::is_same<Setter, detail::none>::value, "SetFunction must be callable");
+			|| std::same_as<Setter, detail::none>, "SetFunction must be callable");
 
 		using property_type = v8pp::property<Getter, Setter, detail::none, detail::none>;
+		using Traits = detail::none;
 
 		v8::HandleScope scope(isolate_);
 
-		using Traits = detail::none;
-		v8::AccessorGetterCallback getter = property_type::template get<Traits>;
-		v8::AccessorSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
-		v8::Local<v8::String> v8_name = v8pp::to_v8(isolate_, name);
+		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate_, name);
+		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
+		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate_, property_type(std::move(get), std::move(set)));
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 1)
-		obj_->SetAccessor(v8_name, getter, setter, data, v8::PropertyAttribute(v8::DontDelete));
-#else
-		obj_->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
-#endif
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
 		return *this;
 	}
 
@@ -151,8 +141,7 @@ public:
 
 private:
 	template<typename Variable>
-	static void var_get(v8::Local<v8::String>,
-		v8::PropertyCallbackInfo<v8::Value> const& info)
+	static void var_get(v8::Local<v8::Name>, v8::PropertyCallbackInfo<v8::Value> const& info)
 	{
 		v8::Isolate* isolate = info.GetIsolate();
 
@@ -161,8 +150,7 @@ private:
 	}
 
 	template<typename Variable>
-	static void var_set(v8::Local<v8::String>, v8::Local<v8::Value> value,
-		v8::PropertyCallbackInfo<void> const& info)
+	static void var_set(v8::Local<v8::Name>, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
 	{
 		v8::Isolate* isolate = info.GetIsolate();
 
@@ -175,5 +163,3 @@ private:
 };
 
 } // namespace v8pp
-
-#endif // V8PP_MODULE_HPP_INCLUDED

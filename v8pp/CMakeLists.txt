@@ -33,6 +33,7 @@ set(V8PP_HEADERS
 	property.hpp
 	ptr_traits.hpp
 	throw_ex.hpp
+	type_info.hpp
 	utility.hpp
 	version.hpp
 )
@@ -87,11 +88,6 @@ else()
 	target_link_libraries(v8pp PUBLIC V8::V8)
 	if(BUILD_SHARED_LIBS)
 		target_link_libraries(v8pp PUBLIC ${CMAKE_DL_LIBS})
-	endif()
-	if(APPLE)
-		# turn off RTTI to avoid generating typeinfo for v8::ArrayBuffer::Allocator
-		# used in context.cpp
-		set_source_files_properties(context.cpp PROPERTIES COMPILE_FLAGS -fno-rtti)
 	endif()
 endif()
 

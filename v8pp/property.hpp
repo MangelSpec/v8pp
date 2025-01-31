@@ -1,52 +1,45 @@
-#ifndef V8PP_PROPERTY_HPP_INCLUDED
-#define V8PP_PROPERTY_HPP_INCLUDED
-
-#include <cassert>
+#pragma once
 
 #include "v8pp/convert.hpp"
 #include "v8pp/function.hpp"
 
-namespace v8pp {
-
-template<typename Get, typename Set, typename GetClass, typename SetClass>
-struct property;
-
-namespace detail {
+namespace v8pp::detail {
 
 template<typename F, typename T, typename U = typename call_from_v8_traits<F>::template arg_type<0>>
 inline constexpr bool function_with_object = std::is_member_function_pointer_v<F> ||
 	(std::is_lvalue_reference_v<U> && std::is_base_of_v<T, std::remove_cv_t<std::remove_reference_t<U>>>);
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_getter = CallTraits::arg_count == 0 + Offset && !is_void_return<F>;
+inline constexpr bool is_getter = CallTraits::arg_count == 0 + Offset
+	&& !std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_direct_getter = CallTraits::arg_count == 2 + Offset
-	&& std::is_same_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::String>>
-	&& std::is_same_v<typename CallTraits::template arg_type<1 + Offset>, v8::PropertyCallbackInfo<v8::Value> const&>
-	&& is_void_return<F>;
+	&& std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>>
+	&& std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::PropertyCallbackInfo<v8::Value> const&>
+	&& std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_isolate_getter = CallTraits::arg_count == 1 + Offset
 	&& is_first_arg_isolate<F, Offset>
-	&& !is_void_return<F>;
+	&& !std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_setter = CallTraits::arg_count == 1 + Offset;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_direct_setter = CallTraits::arg_count == 3 + Offset
-	&& std::is_same_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::String>>
-	&& std::is_same_v<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>>
-	&& std::is_same_v<typename CallTraits::template arg_type<2 + Offset>, v8::PropertyCallbackInfo<void> const&>
-	&& is_void_return<F>;
+	&& std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>>
+	&& std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>>
+	&& std::same_as<typename CallTraits::template arg_type<2 + Offset>, v8::PropertyCallbackInfo<void> const&>
+	&& std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_isolate_setter = CallTraits::arg_count == 2 + Offset
 	&& is_first_arg_isolate<F, Offset>;
 
 template<typename Get, typename... ObjArg>
-void property_get(Get& getter, v8::Local<v8::String> name,
+void property_get(Get& getter, v8::Local<v8::Name> name,
 	v8::PropertyCallbackInfo<v8::Value> const& info, ObjArg&... obj)
 {
 	constexpr size_t offset = sizeof...(ObjArg) == 0 || std::is_member_function_pointer_v<Get> ? 0 : 1;
@@ -79,7 +72,7 @@ void property_get(Get& getter, v8::Local<v8::String> name,
 }
 
 template<typename Set, typename... ObjArg>
-void property_set(Set& setter, v8::Local<v8::String> name, v8::Local<v8::Value> value,
+void property_set(Set& setter, v8::Local<v8::Name> name, v8::Local<v8::Value> value,
 	v8::PropertyCallbackInfo<void> const& info, ObjArg&... obj)
 {
 	constexpr size_t offset = sizeof...(ObjArg) == 0 || std::is_member_function_pointer_v<Set> ? 0 : 1;
@@ -115,12 +108,12 @@ void property_set(Set& setter, v8::Local<v8::String> name, v8::Local<v8::Value> 
 }
 
 template<typename Property, typename Traits, typename GetClass>
-void property_get(v8::Local<v8::String> name, v8::PropertyCallbackInfo<v8::Value> const& info)
+void property_get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> const& info)
 try
 {
 	auto&& property = detail::external_data::get<Property>(info.Data());
 
-	if constexpr (std::is_same_v<GetClass, none>)
+	if constexpr (std::same_as<GetClass, none>)
 	{
 		property_get(property.getter, name, info);
 	}
@@ -139,12 +132,12 @@ catch (std::exception const& ex)
 }
 
 template<typename Property, typename Traits, typename Set, typename SetClass>
-void property_set(v8::Local<v8::String> name, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
+void property_set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
 try
 {
 	auto&& property = detail::external_data::get<Property>(info.Data());
 
-	if constexpr (std::is_same_v<SetClass, none>)
+	if constexpr (std::same_as<SetClass, none>)
 	{
 		property_set(property.setter, name, value, info);
 	}
@@ -158,11 +151,14 @@ catch (std::exception const& ex)
 {
 	if (info.ShouldThrowOnError())
 	{
-		info.GetReturnValue().Set(throw_ex(info.GetIsolate(), ex.what()));
+		info.GetIsolate()->ThrowException(throw_ex(info.GetIsolate(), ex.what()));
 	}
+	// TODO: info.GetReturnValue().Set(false);
 }
 
-} // namespace detail
+} // namespace v8pp::detail
+
+namespace v8pp {
 
 /// Property with get and set functions
 template<typename Get, typename Set, typename GetClass, typename SetClass>
@@ -181,13 +177,13 @@ struct property final
 	}
 
 	template<typename Traits>
-	static void get(v8::Local<v8::String> name, v8::PropertyCallbackInfo<v8::Value> const& info)
+	static void get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> const& info)
 	{
 		detail::property_get<property, Traits, GetClass>(name, info);
 	}
 
 	template<typename Traits>
-	static void set(v8::Local<v8::String> name, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
+	static void set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
 	{
 		detail::property_set<property, Traits, Set, SetClass>(name, value, info);
 	}
@@ -208,23 +204,22 @@ struct property<Get, detail::none, GetClass, detail::none> final
 	}
 
 	template<typename Traits>
-	static void get(v8::Local<v8::String> name, v8::PropertyCallbackInfo<v8::Value> const& info)
+	static void get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> const& info)
 	{
 		detail::property_get<property, Traits, GetClass>(name, info);
 	}
 
 	template<typename Traits>
-	static void set(v8::Local<v8::String> name, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const& info)
+	static void set(v8::Local<v8::Name> name, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const& info)
 	{
 		//assert(false && "read-only property");
 		if (info.ShouldThrowOnError())
 		{
-			info.GetReturnValue().Set(throw_ex(info.GetIsolate(),
+			info.GetIsolate()->ThrowException(v8pp::to_v8(info.GetIsolate(),
 				"read-only property " + from_v8<std::string>(info.GetIsolate(), name)));
 		}
+		// TODO: info.GetReturnValue().Set(false);
 	}
 };
 
 } // namespace v8pp
-
-#endif // V8PP_PROPERTY_HPP_INCLUDED

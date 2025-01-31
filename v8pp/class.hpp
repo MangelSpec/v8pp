@@ -1,5 +1,4 @@
-#ifndef V8PP_CLASS_HPP_INCLUDED
-#define V8PP_CLASS_HPP_INCLUDED
+#pragma once
 
 #include <algorithm>
 #include <memory>
@@ -11,11 +10,10 @@
 #include "v8pp/function.hpp"
 #include "v8pp/property.hpp"
 #include "v8pp/ptr_traits.hpp"
+#include "v8pp/type_info.hpp"
 #include "v8pp/object.hpp"
 
-namespace v8pp {
-
-namespace detail {
+namespace v8pp::detail {
 
 struct class_info
 {
@@ -162,7 +160,9 @@ private:
 	static classes* instance(operation op, v8::Isolate* isolate);
 };
 
-} // namespace detail
+} // namespace v8pp::detail
+
+namespace v8pp {
 
 /// Interface to access C++ classes bound to V8
 template<typename T, typename Traits = raw_ptr_traits>
@@ -254,14 +254,14 @@ public:
 	template<typename U>
 	class_& inherit()
 	{
-		using namespace detail;
-		static_assert(std::is_base_of<U, T>::value,
-			"Class U should be base for class T");
+		static_assert(std::derived_from<T, U>, "Class U should be base for class T");
 		// TODO: std::is_convertible<T*, U*> and check for duplicates in hierarchy?
-		object_registry& base = classes::find<Traits>(isolate(), type_id<U>());
-		class_info_.add_base(base, [](pointer_type const& ptr) -> pointer_type
-			{ return pointer_type(Traits::template static_pointer_cast<U>(
-				  Traits::template static_pointer_cast<T>(ptr))); });
+		auto& base = detail::classes::find<Traits>(isolate(), detail::type_id<U>());
+		class_info_.add_base(base, [](pointer_type const& ptr)
+		{
+			return pointer_type{Traits::template static_pointer_cast<U>(
+				Traits::template static_pointer_cast<T>(ptr))};
+		});
 		class_info_.js_function_template()->Inherit(base.class_function_template());
 		return *this;
 	}
@@ -305,8 +305,7 @@ public:
 	template<typename Attribute>
 	class_& var(std::string_view name, Attribute attribute)
 	{
-		static_assert(std::is_member_object_pointer<Attribute>::value,
-			"Attribute must be pointer to member data");
+		static_assert(std::is_member_object_pointer_v<Attribute>, "Attribute must be pointer to member data");
 
 		v8::HandleScope scope(isolate());
 
@@ -314,11 +313,10 @@ public:
 		attribute_type attr = attribute;
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate(), name);
+		v8::AccessorNameGetterCallback getter = &member_get<attribute_type>;
+		v8::AccessorNameSetterCallback setter = &member_set<attribute_type>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr));
-		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name,
-			&member_get<attribute_type>, &member_set<attribute_type>,
-			data,
-			v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
+		class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
 		return *this;
 	}
 
@@ -326,18 +324,19 @@ public:
 	template<typename GetFunction, typename SetFunction = detail::none>
 	class_& property(std::string_view name, GetFunction&& get, SetFunction&& set = {})
 	{
-		using Getter = typename std::conditional<
-			std::is_member_function_pointer<GetFunction>::value,
+		using Getter = typename std::conditional_t<std::is_member_function_pointer_v<GetFunction>,
 			typename detail::function_traits<GetFunction>::template pointer_type<T>,
-			typename std::decay<GetFunction>::type>::type;
+			typename std::decay_t<GetFunction>>;
 
-		using Setter = typename std::conditional<
-			std::is_member_function_pointer<SetFunction>::value,
+		using Setter = typename std::conditional_t<std::is_member_function_pointer_v<SetFunction>,
 			typename detail::function_traits<SetFunction>::template pointer_type<T>,
-			typename std::decay<SetFunction>::type>::type;
+			typename std::decay_t<SetFunction>>;
 
-		static_assert(std::is_member_function_pointer<GetFunction>::value || detail::is_callable<Getter>::value, "GetFunction must be callable");
-		static_assert(std::is_member_function_pointer<SetFunction>::value || detail::is_callable<Setter>::value || std::is_same<Setter, detail::none>::value, "SetFunction must be callable");
+		static_assert(std::is_member_function_pointer_v<GetFunction>
+			|| detail::is_callable<Getter>::value, "GetFunction must be callable");
+		static_assert(std::is_member_function_pointer_v<SetFunction>
+			|| detail::is_callable<Setter>::value
+			|| std::same_as<Setter, detail::none>, "SetFunction must be callable");
 
 		using GetClass = std::conditional_t<detail::function_with_object<Getter, T>, T, detail::none>;
 		using SetClass = std::conditional_t<detail::function_with_object<Setter, T>, T, detail::none>;
@@ -346,10 +345,11 @@ public:
 
 		v8::HandleScope scope(isolate());
 
-		v8::AccessorGetterCallback getter = property_type::template get<Traits>;
-		v8::AccessorSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
+		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
+		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::String> v8_name = v8pp::to_v8(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
+		class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
 		return *this;
 	}
@@ -415,18 +415,15 @@ public:
 
 	/// Create JavaScript object which references externally created C++ class.
 	/// It will not take ownership of the C++ pointer.
-	static v8::Local<v8::Object> reference_external(v8::Isolate* isolate,
-		object_pointer_type const& ext)
+	static v8::Local<v8::Object> reference_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
-		using namespace detail;
-		return classes::find<Traits>(isolate, type_id<T>()).wrap_object(ext, false);
+		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).wrap_object(ext, false);
 	}
 
 	/// Remove external reference from JavaScript
 	static void unreference_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
-		using namespace detail;
-		return classes::find<Traits>(isolate, type_id<T>()).remove_object(Traits::pointer_id(ext));
+		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).remove_object(Traits::pointer_id(ext));
 	}
 
 	/// As reference_external but delete memory for C++ object
@@ -434,8 +431,7 @@ public:
 	/// to allocate `ext`
 	static v8::Local<v8::Object> import_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
-		using namespace detail;
-		auto& class_info = classes::find<Traits>(isolate, type_id<T>());
+		auto& class_info = detail::classes::find<Traits>(isolate, detail::type_id<T>());
 		v8::Local<v8::Object> obj = class_info.wrap_object(ext, true);
 		class_info.apply_const_properties(isolate, obj, ext);
 		return obj;
@@ -444,9 +440,8 @@ public:
 	/// Get wrapped object from V8 value, may return nullptr on fail.
 	static object_pointer_type unwrap_object(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-		using namespace detail;
 		return Traits::template static_pointer_cast<T>(
-			classes::find<Traits>(isolate, type_id<T>()).unwrap_object(value));
+			detail::classes::find<Traits>(isolate, detail::type_id<T>()).unwrap_object(value));
 	}
 
 	/// Create a wrapped C++ object and import it into JavaScript
@@ -457,20 +452,16 @@ public:
 	}
 
 	/// Find V8 object handle for a wrapped C++ object, may return empty handle on fail.
-	static v8::Local<v8::Object> find_object(v8::Isolate* isolate,
-		object_const_pointer_type const& obj)
+	static v8::Local<v8::Object> find_object(v8::Isolate* isolate, object_const_pointer_type const& obj)
 	{
-		using namespace detail;
-		return classes::find<Traits>(isolate, type_id<T>())
-			.find_v8_object(Traits::const_pointer_cast(obj));
+		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).find_v8_object(Traits::const_pointer_cast(obj));
 	}
 
 	/// Find V8 object handle for a wrapped C++ object, may return empty handle on fail
 	/// or wrap a copy of the obj if class_.auto_wrap_objects()
 	static v8::Local<v8::Object> find_object(v8::Isolate* isolate, T const& obj)
 	{
-		using namespace detail;
-		detail::object_registry<Traits>& class_info = classes::find<Traits>(isolate, type_id<T>());
+		auto& class_info = detail::classes::find<Traits>(isolate, detail::type_id<T>());
 		v8::Local<v8::Object> wrapped_object = class_info.find_v8_object(Traits::key(const_cast<T*>(&obj)));
 		if constexpr (!std::is_abstract<T>::value)
 		{
@@ -489,22 +480,19 @@ public:
 	/// Destroy wrapped C++ object
 	static void destroy_object(v8::Isolate* isolate, object_pointer_type const& obj)
 	{
-		using namespace detail;
-		classes::find<Traits>(isolate, type_id<T>()).remove_object(Traits::pointer_id(obj));
+		detail::classes::find<Traits>(isolate, detail::type_id<T>()).remove_object(Traits::pointer_id(obj));
 	}
 
 	/// Destroy all wrapped C++ objects of this class
 	static void destroy_objects(v8::Isolate* isolate)
 	{
-		using namespace detail;
-		classes::find<Traits>(isolate, type_id<T>()).remove_objects();
+		detail::classes::find<Traits>(isolate, detail::type_id<T>()).remove_objects();
 	}
 
 	/// Destroy all wrapped C++ objects and this binding class_
 	static void destroy(v8::Isolate* isolate)
 	{
-		using namespace detail;
-		classes::remove<Traits>(isolate, type_id<T>());
+		detail::classes::remove<Traits>(isolate, detail::type_id<T>());
 	}
 
 private:
@@ -541,7 +529,11 @@ private:
 		}
 		catch (std::exception const& ex)
 		{
-			info.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+			if (info.ShouldThrowOnError())
+			{
+				isolate->ThrowException(throw_ex(isolate, ex.what()));
+			}
+			//TODO: info.GetReturnValue().Set(false);
 		}
 	}
 };
@@ -558,5 +550,3 @@ void cleanup(v8::Isolate* isolate);
 #if V8PP_HEADER_ONLY
 #include "v8pp/class.ipp"
 #endif
-
-#endif // V8PP_CLASS_HPP_INCLUDED

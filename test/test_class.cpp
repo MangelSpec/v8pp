@@ -52,7 +52,7 @@ struct X : Xbase
 template<typename Traits, typename X_ptr = typename v8pp::class_<X, Traits>::object_pointer_type>
 static X_ptr create_X(v8::FunctionCallbackInfo<v8::Value> const& args)
 {
-	X_ptr x(new X);
+	X_ptr x = Traits::template create<X>();
 	switch (args.Length())
 	{
 	case 1:
@@ -76,7 +76,7 @@ int external_get2(X const& x, v8::Isolate*)
 	return x.var;
 }
 
-void external_get3(X const& x, v8::Local<v8::String>, const v8::PropertyCallbackInfo<v8::Value>& info)
+void external_get3(X const& x, v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)
 {
 	info.GetReturnValue().Set(v8pp::to_v8(info.GetIsolate(), x.var));
 }
@@ -91,7 +91,7 @@ void external_set2(X& x, v8::Isolate*, int value)
 	x.var = value;
 }
 
-void external_set3(X& x, v8::Local<v8::String>, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
+void external_set3(X& x, v8::Local<v8::Name>, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
 {
 	x.var = v8pp::from_v8<int>(info.GetIsolate(), value);
 }
@@ -125,7 +125,7 @@ static int extern_fun(v8::FunctionCallbackInfo<v8::Value> const& args)
 }
 
 template<typename Traits>
-void get_rprop_direct(v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const& info)
+void get_rprop_direct(v8::Local<v8::Name>, v8::PropertyCallbackInfo<v8::Value> const& info)
 {
 	auto self = v8pp::class_<X, Traits>::unwrap_object(info.GetIsolate(), info.This());
 	info.GetReturnValue().Set(v8pp::to_v8(info.GetIsolate(), self->var));
@@ -190,10 +190,10 @@ void test_class_()
 		.static_("my_static_const_var", 42, true)
 		;
 
-	static_assert(std::is_move_constructible<decltype(X_class)>::value, "");
-	static_assert(!std::is_move_assignable<decltype(X_class)>::value, "");
-	static_assert(!std::is_copy_assignable<decltype(X_class)>::value, "");
-	static_assert(!std::is_copy_constructible<decltype(X_class)>::value, "");
+	static_assert(std::is_move_constructible_v<decltype(X_class)>);
+	static_assert(!std::is_move_assignable_v<decltype(X_class)>);
+	static_assert(!std::is_copy_assignable_v<decltype(X_class)>);
+	static_assert(!std::is_copy_constructible_v<decltype(X_class)>);
 
 	v8pp::class_<Y, Traits> Y_class(isolate);
 	Y_class
@@ -324,7 +324,7 @@ void test_class_()
 	context.isolate()->RequestGarbageCollectionForTesting(
 		v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
 
-	bool const use_shared_ptr = std::is_same<Traits, v8pp::shared_ptr_traits>::value;
+	bool constexpr use_shared_ptr = std::same_as<Traits, v8pp::shared_ptr_traits>;
 
 	check_eq("Y count after GC", Y::instance_count,
 		1 + 2 * use_shared_ptr); // y1 + (y2 + y3 when use_shared_ptr)
