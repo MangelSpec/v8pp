@@ -16,3 +16,4 @@ out/
 *.a
 /include-what-you-use
 /build*/
+.vscode/
