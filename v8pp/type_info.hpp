@@ -40,6 +40,7 @@ constexpr type_info type_id()
 #else
 #error "Unknown compiler"
 #endif
+#if V8PP_PRETTIFY_TYPENAMES == 1
 	for (auto&& prefix : all_prefixes)
 	{
 		const auto p = name.find(prefix);
@@ -58,6 +59,7 @@ constexpr type_info type_id()
 			break;
 		}
 	}
+#endif
 
 	return type_info(name);
 }
