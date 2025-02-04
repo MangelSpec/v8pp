@@ -374,8 +374,9 @@ public:
 		// Store the native function for the constant property in object_registry
 		class_info_.const_properties.emplace(name, [get = std::move(get)](v8::Isolate* isolate, pointer_type obj)
 			{
-				T* typed_obj = static_cast<T*>(obj);
-				return to_v8(isolate, (typed_obj->*get)()); });
+				auto typed_obj = Traits::template static_pointer_cast<T>(obj);
+				return to_v8(isolate, ((*typed_obj).*get)());
+			});
 		return *this;
 	}
 
