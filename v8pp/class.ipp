@@ -222,6 +222,7 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 		}, v8::WeakCallbackType::kInternalFields);
 	objects_.emplace(object, wrapped_object{ std::move(pobj), call_dtor });
 	
+	apply_const_properties(isolate_, obj, object);
 
 	return scope.Escape(obj);
 }
@@ -261,6 +262,8 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 				this_->remove_object(object);
 			}, v8::WeakCallbackType::kInternalFields);
 		objects_.emplace(object, wrapped_object{ std::move(pobj), call_dtor });
+
+		apply_const_properties(isolate_, obj, object);
 	}
 
 	return scope.Escape(obj);

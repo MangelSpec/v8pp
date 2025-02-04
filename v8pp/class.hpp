@@ -433,9 +433,7 @@ public:
 	static v8::Local<v8::Object> import_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
 		auto& class_info = detail::classes::find<Traits>(isolate, detail::type_id<T>());
-		v8::Local<v8::Object> obj = class_info.wrap_object(ext, true);
-		class_info.apply_const_properties(isolate, obj, ext);
-		return obj;
+		return class_info.wrap_object(ext, true);
 	}
 
 	/// Get wrapped object from V8 value, may return nullptr on fail.
