@@ -81,24 +81,40 @@ struct convert<String, typename std::enable_if<detail::is_string<String>::value>
 			throw invalid_argument(isolate, value, "String");
 		}
 
+		v8::HandleScope scope(isolate);
+		v8::Local<v8::String> str = value->ToString(isolate->GetCurrentContext()).ToLocalChecked();
+
+#if V8_MAJOR_VERSION > 13 || (V8_MAJOR_VERSION == 13 && V8_MINOR_VERSION >= 3)
 		if constexpr (sizeof(Char) == 1)
 		{
-			v8::String::Utf8Value const str(isolate, value);
-			if (str.length() == 0 && *str == nullptr)
-			{
-				throw runtime_error(isolate, value, "toString conversation failed");
-			}
-			return from_type(reinterpret_cast<Char const*>(*str), str.length());
+			auto const len = str->Utf8LengthV2(isolate);
+			from_type result(len, 0);
+			result.resize(str->WriteUtf8V2(isolate, result.data(), len));
+			return result;
 		}
 		else
 		{
-			v8::String::Value const str(isolate, value);
-			if (str.length() == 0 && *str == nullptr)
-			{
-				throw runtime_error(isolate, value, "toString conversation failed");
-			}
-			return from_type(reinterpret_cast<Char const*>(*str), str.length());
+			auto const len = str->Length();
+			from_type result(len, 0);
+			str->WriteV2(isolate, 0, len, reinterpret_cast<uint16_t*>(result.data()));
+			return result;
 		}
+#else
+		if constexpr (sizeof(Char) == 1)
+		{
+			auto const len = str->Utf8Length(isolate);
+			from_type result(len, 0);
+			result.resize(str->WriteUtf8(isolate, result.data(), len, nullptr, v8::String::NO_NULL_TERMINATION | v8::String::REPLACE_INVALID_UTF8));
+			return result;
+		}
+		else
+		{
+			auto const len = str->Length();
+			from_type result(len, 0);
+			result.resize(str->Write(isolate, reinterpret_cast<uint16_t*>(result.data()), 0, len, v8::String::NO_NULL_TERMINATION));
+			return result;
+		}
+#endif
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, std::basic_string_view<Char, Traits> value)
