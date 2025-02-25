@@ -278,13 +278,14 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 template<typename Traits>
 V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args)
 {
-	if (ctor_.empty())
+	if (!ctor_)
 	{
 		//assert(false && "create not allowed");
 		throw std::runtime_error(class_name() + " has no constructor");
 	}
 	auto [object, size] = ctor_(args);
-	return wrap_object(object, size);
+	//return wrap_object(object, size);
+	return wrap_this(args.This(), object, size);
 }
 
 template<typename Traits>

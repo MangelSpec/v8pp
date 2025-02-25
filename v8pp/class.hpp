@@ -68,7 +68,7 @@ public:
 	void set_auto_wrap_objects(bool auto_wrap) { auto_wrap_objects_ = auto_wrap; }
 	bool auto_wrap_objects() const { return auto_wrap_objects_; }
 
-	void set_ctor(ctor_function&& ctor) { ctor_.emplace_back(std::move(ctor)); }
+	void set_ctor(ctor_function&& ctor) { ctor_ = std::move(ctor); }
 
 	void add_base(object_registry& info, cast_function cast);
 	bool cast(pointer_type& ptr, type_info const& actual_type) const;
@@ -79,6 +79,7 @@ public:
 	pointer_type find_object(object_id id, type_info const& actual_type) const;
 	v8::Local<v8::Object> find_v8_object(pointer_type const& ptr) const;
 
+	v8::Local<v8::Object> wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, size_t size);
 	v8::Local<v8::Object> wrap_object(pointer_type const& object, size_t size);
 	v8::Local<v8::Object> wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args);
 	pointer_type unwrap_object(v8::Local<v8::Value> value);
@@ -336,7 +337,10 @@ public:
 		v8::AccessorNameGetterCallback getter = &member_get<attribute_type>;
 		v8::AccessorNameSetterCallback setter = &member_set<attribute_type>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr));
-		class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
+		//class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
+		class_info_.js_function_template()
+				->PrototypeTemplate()
+				->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
 		return *this;
 	}
 
@@ -369,7 +373,7 @@ public:
 		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::String> v8_name = v8pp::to_v8(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
-		class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
+		//class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
 		return *this;
 	}
