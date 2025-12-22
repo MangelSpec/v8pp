@@ -17,3 +17,4 @@ out/
 /include-what-you-use
 /build*/
 .vscode/
+CMakeSettings.json
