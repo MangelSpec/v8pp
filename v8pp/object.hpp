@@ -13,17 +13,33 @@ namespace v8pp {
 /// return false if the value doesn't exist in the options object
 template<typename T>
 bool get_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
-	std::string_view name, T& value)
+	std::string_view name, T& value, bool support_subobjects = true)
 {
-	std::string_view::size_type const dot_pos = name.find('.');
-	if (dot_pos != name.npos)
+	v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+	if (support_subobjects)
 	{
-		v8::Local<v8::Object> suboptions;
-		return get_option(isolate, options, name.substr(0, dot_pos), suboptions)
-			&& get_option(isolate, suboptions, name.substr(dot_pos + 1), value);
+		for (;;)
+		{
+			std::string_view::size_type const dot_pos = name.find('.');
+			if (dot_pos == name.npos)
+			{
+				break;
+			}
+
+			v8::Local<v8::Value> part;
+			if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
+				|| !part->IsObject())
+			{
+				return false;
+			}
+			options = part.As<v8::Object>();
+			name.remove_prefix(dot_pos + 1);
+		}
 	}
+
 	v8::Local<v8::Value> val;
-	if (!options->Get(isolate->GetCurrentContext(), v8pp::to_v8(isolate, name)).ToLocal(&val)
+	if (!options->Get(context, v8pp::to_v8(isolate, name)).ToLocal(&val)
 		|| val->IsUndefined())
 	{
 		return false;
@@ -34,19 +50,67 @@ bool get_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
 
 /// Set named value in V8 object
 /// Dot symbols in option name delimits subobjects name.
-/// return false if the value doesn't exists in the options subobject
 template<typename T>
 bool set_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
-	std::string_view name, T const& value)
+	std::string_view name, T const& value, bool support_subobjects = true)
 {
-	std::string_view::size_type const dot_pos = name.find('.');
-	if (dot_pos != name.npos)
+	v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+	if (support_subobjects)
 	{
-		v8::Local<v8::Object> suboptions;
-		return get_option(isolate, options, name.substr(0, dot_pos), suboptions)
-			&& set_option(isolate, suboptions, name.substr(dot_pos + 1), value);
+		for (;;)
+		{
+			std::string_view::size_type const dot_pos = name.find('.');
+			if (dot_pos == name.npos)
+			{
+				break;
+			}
+
+			v8::Local<v8::Value> part;
+			if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
+				|| !part->IsObject())
+			{
+				return false;
+			}
+			options = part.As<v8::Object>();
+			name.remove_prefix(dot_pos + 1);
+		}
 	}
-	return options->Set(isolate->GetCurrentContext(), v8pp::to_v8(isolate, name), to_v8(isolate, value)).FromJust();
+
+	return options->Set(context, v8pp::to_v8(isolate, name), to_v8(isolate, value)).FromMaybe(false);
+}
+
+/// Set named value in V8 object as data property
+template<typename T>
+bool set_option_data(v8::Isolate* isolate, v8::Local<v8::Object> options,
+	std::string_view name, T const& value, bool support_subobjects = true)
+{
+	v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+	if (support_subobjects)
+	{
+		for (;;)
+		{
+			std::string_view::size_type const dot_pos = name.find('.');
+			if (dot_pos == name.npos)
+			{
+				break;
+			}
+
+			v8::Local<v8::Value> part;
+			if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
+				|| !part->IsObject())
+			{
+				return false;
+			}
+			options = part.As<v8::Object>();
+			name.remove_prefix(dot_pos + 1);
+		}
+	}
+
+	return options->CreateDataProperty(context,
+		v8pp::to_v8(isolate, name).As<v8::Name>(),
+		to_v8(isolate, value)).FromMaybe(false);
 }
 
 /// Set named constant in V8 object
