@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <memory>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include "v8pp/config.hpp"
@@ -10,13 +11,6 @@
 #include "v8pp/property.hpp"
 #include "v8pp/ptr_traits.hpp"
 #include "v8pp/type_info.hpp"
-
-#if V8PP_HAS_ABSEIL_LIBRARY == 1
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/inlined_vector.h>
-#else
-#include <unordered_map>
-#endif
 
 #if V8_MAJOR_VERSION > 13 || (V8_MAJOR_VERSION == 13 && V8_MINOR_VERSION >= 3)
 #include <v8-external-memory-accounter.h>
@@ -90,6 +84,22 @@ public:
 	v8::Local<v8::Object> wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args);
 	pointer_type unwrap_object(v8::Local<v8::Value> value);
 
+	std::unordered_map<std::string, std::function<v8::Local<v8::Value>(v8::Isolate*, pointer_type)>> const_properties;
+
+	void apply_const_properties(v8::Isolate* isolate, v8::Local<v8::Object> obj, pointer_type const& ext)
+	{
+		// Set constant properties
+		for (const auto& base : bases_)
+		{
+			base.info.apply_const_properties(isolate, obj, ext);
+		}
+
+		for (const auto& [name, func] : const_properties)
+		{
+			v8pp::set_const(isolate, obj, name, func(isolate, ext));
+		}
+	}
+
 private:
 	struct wrapped_object
 	{
@@ -111,42 +121,9 @@ private:
 		}
 	};
 
-#if V8PP_HAS_ABSEIL_LIBRARY == 1
-	template<typename K, typename V>
-	using map = absl::flat_hash_map<K, V>;
-
-	template<typename T, size_t InlineSize>
-	using small_vector = absl::InlinedVector<T, InlineSize>;
-#else
-	template<typename K, typename V>
-	using map = std::unordered_map<K, V>;
-
-	template<typename T, size_t>
-	using small_vector = std::vector<T>;
-#endif
-
-	using const_property_map = map<std::string, std::function<v8::Local<v8::Value>(v8::Isolate*, pointer_type)>>;
-	using objects_map = map<pointer_type, wrapped_object>;
-
-	const_property_map const_properties;
-
-	void apply_const_properties(v8::Isolate* isolate, v8::Local<v8::Object> obj, pointer_type const& ext)
-	{
-		// Set constant properties
-		for (const auto& base : bases_)
-		{
-			base.info.apply_const_properties(isolate, obj, ext);
-		}
-
-		for (const auto& [name, func] : const_properties)
-		{
-			v8pp::set_const(isolate, obj, name, func(isolate, ext));
-		}
-	}
-
-	small_vector<base_class_info, 4> bases_;
-	small_vector<object_registry*, 8> derivatives_;
-	objects_map objects_;
+	std::vector<base_class_info> bases_;
+	std::vector<object_registry*> derivatives_;
+	std::unordered_map<pointer_type, wrapped_object> objects_;
 
 	v8::Isolate* isolate_;
 	v8::Global<v8::FunctionTemplate> func_;
