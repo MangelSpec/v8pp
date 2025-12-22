@@ -90,6 +90,12 @@ public:
 	v8::Local<v8::Object> wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args);
 	pointer_type unwrap_object(v8::Local<v8::Value> value);
 
+	void add_const_property(std::string_view name,
+		std::function<v8::Local<v8::Value>(v8::Isolate*, pointer_type)> fn)
+	{
+		const_properties.emplace(std::string(name), std::move(fn));
+	}
+
 private:
 	struct wrapped_object
 	{
@@ -418,8 +424,7 @@ public:
 
 		v8::HandleScope scope(isolate());
 
-		// Store the native function for the constant property in object_registry
-		class_info_.const_properties.emplace(name, [get = std::move(get)](v8::Isolate* isolate, pointer_type obj)
+		class_info_.add_const_property(name, [get = std::move(get)](v8::Isolate* isolate, pointer_type obj)
 			{
 				auto typed_obj = Traits::template static_pointer_cast<T>(obj);
 				return to_v8(isolate, ((*typed_obj).*get)());
