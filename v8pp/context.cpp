@@ -47,7 +47,7 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 		const auto it = ctx->modules_.find(name);
 		if (it != ctx->modules_.end())
 		{
-			result = v8::Local<v8::Value>::New(isolate, it->second.exports);
+			result = v8::Local<v8::Value>::New(isolate, it->second->exports);
 		}
 		else
 		{
@@ -63,25 +63,25 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 				filename += suffix;
 			}
 
-			dynamic_module module;
+			auto module = std::make_unique<dynamic_module>();
 #if defined(WIN32)
 			UINT const prev_error_mode = SetErrorMode(SEM_NOOPENFILEERRORBOX);
-			module.handle = LoadLibraryA(filename.c_str());
+			module->handle = LoadLibraryA(filename.c_str());
 			::SetErrorMode(prev_error_mode);
 #else
-			module.handle = dlopen(filename.c_str(), RTLD_LAZY);
+			module->handle = dlopen(filename.c_str(), RTLD_LAZY);
 #endif
 
-			if (!module.handle)
+			if (!module->handle)
 			{
 				throw std::runtime_error("load_module(" + name
 					+ "): could not load shared library " + filename);
 			}
 #if defined(WIN32)
-			void* sym = ::GetProcAddress((HMODULE)module.handle,
+			void* sym = ::GetProcAddress((HMODULE)module->handle,
 				V8PP_STRINGIZE(V8PP_PLUGIN_INIT_PROC_NAME));
 #else
-			void* sym = dlsym(module.handle, V8PP_STRINGIZE(V8PP_PLUGIN_INIT_PROC_NAME));
+			void* sym = dlsym(module->handle, V8PP_STRINGIZE(V8PP_PLUGIN_INIT_PROC_NAME));
 #endif
 			if (!sym)
 			{
@@ -94,7 +94,7 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 			using module_init_proc = v8::Local<v8::Value> (*)(v8::Isolate*);
 			module_init_proc init_proc = reinterpret_cast<module_init_proc>(sym);
 			result = init_proc(isolate);
-			module.exports.Reset(isolate, result);
+			module->exports.Reset(isolate, result);
 			ctx->modules_.emplace(name, std::move(module));
 		}
 	}
@@ -247,7 +247,7 @@ void context::destroy()
 
 	for (auto& kv : modules_)
 	{
-		dynamic_module& module = kv.second;
+		dynamic_module& module = *kv.second;
 		module.exports.Reset();
 		if (module.handle)
 		{

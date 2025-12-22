@@ -3,6 +3,12 @@
 #include <cassert>
 #include <cstdio> // for snprintf
 
+#if V8PP_HAS_ABSEIL_LIBRARY == 1
+#include <absl/container/flat_hash_map.h>
+#else
+#include <unordered_map>
+#endif
+
 namespace v8pp::detail {
 
 static V8PP_IMPL std::string pointer_str(void const* ptr)
@@ -444,7 +450,11 @@ V8PP_IMPL classes* classes::instance(operation op, v8::Isolate* isolate)
 		return nullptr;
 	}
 #else
+#if V8PP_HAS_ABSEIL_LIBRARY == 1
+	static absl::flat_hash_map<v8::Isolate*, classes> instances;
+#else
 	static std::unordered_map<v8::Isolate*, classes> instances;
+#endif
 	switch (op)
 	{
 	case operation::get:

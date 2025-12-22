@@ -1,7 +1,12 @@
 #pragma once
 
 #include <string>
+#include <memory>
+#if V8PP_HAS_ABSEIL_LIBRARY == 1
+#include <absl/container/flat_hash_map.h>
+#else
 #include <map>
+#endif
 
 #include <v8.h>
 
@@ -113,7 +118,11 @@ private:
 	static void run_file(v8::FunctionCallbackInfo<v8::Value> const& args);
 
 	struct dynamic_module;
-	std::map<std::string, dynamic_module> modules_;
+#if V8PP_HAS_ABSEIL_LIBRARY == 1
+	absl::flat_hash_map<std::string, std::unique_ptr<dynamic_module>> modules_;
+#else
+	std::map<std::string, std::unique_ptr<dynamic_module>> modules_;
+#endif
 	std::string lib_path_;
 };
 

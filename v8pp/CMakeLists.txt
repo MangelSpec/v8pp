@@ -4,6 +4,7 @@ include(GNUInstallDirs)
 
 if(DEFINED VCPKG_TARGET_TRIPLET)
 	find_package(V8 CONFIG REQUIRED)
+	find_package(absl CONFIG QUIET)
 else()
 	list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 	find_package(V8 REQUIRED)
@@ -17,6 +18,11 @@ endif()
 
 if (V8_ENABLE_SANDBOX)
 	list(APPEND V8PP_DEFINES V8_ENABLE_SANDBOX)
+endif()
+
+# Optional Abseil support
+if(absl_FOUND AND TARGET absl::flat_hash_map)
+	list(APPEND V8PP_DEFINES V8PP_HAS_ABSEIL_LIBRARY=1)
 endif()
 
 set(V8PP_HEADERS
@@ -77,6 +83,12 @@ if(V8PP_HEADER_ONLY)
 		$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>
 		$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 	target_link_libraries(v8pp INTERFACE V8::V8)
+	if(absl_FOUND)
+		target_link_libraries(v8pp INTERFACE 
+			absl::flat_hash_map 
+			absl::inlined_vector
+		)
+	endif()
 else()
 	add_library(v8pp ${V8PP_HEADERS} ${V8PP_SOURCES})
 	target_compile_definitions(v8pp PUBLIC ${V8PP_DEFINES})
@@ -86,6 +98,12 @@ else()
 		$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>
 		$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 	target_link_libraries(v8pp PUBLIC V8::V8)
+	if(absl_FOUND)
+		target_link_libraries(v8pp PUBLIC 
+			absl::flat_hash_map
+			absl::inlined_vector
+		)
+	endif()
 	if(BUILD_SHARED_LIBS)
 		target_link_libraries(v8pp PUBLIC ${CMAKE_DL_LIBS})
 	endif()
