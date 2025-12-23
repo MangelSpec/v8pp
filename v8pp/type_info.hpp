@@ -29,19 +29,24 @@ private:
 	std::string_view name_;
 };
 
-// Generate unique compile-time ID per type using function pointer address
+// Generate unique compile-time ID per type using static variable address
+// The static variable ensures a single address per type across all translation units
 template<typename T>
-static void* type_id_impl()
+struct type_id_storage
 {
-	return nullptr;
-}
+	static constexpr char value = 0;
+};
+
+template<typename T>
+constexpr char type_id_storage<T>::value;
 
 /// Get type information for type T
 /// The idea is borrowed from https://github.com/Manu343726/ctti
 template<typename T>
 inline type_info type_id()
 {
-	uintptr_t unique_id = reinterpret_cast<uintptr_t>(&type_id_impl<T>);
+	// Use the address of a static variable which is guaranteed to be unique per type
+	uintptr_t unique_id = reinterpret_cast<uintptr_t>(&type_id_storage<T>::value);
 
 #if defined(_MSC_VER) && !defined(__clang__)
 	std::string_view name = __FUNCSIG__;
