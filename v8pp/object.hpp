@@ -48,6 +48,14 @@ bool get_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
 	return true;
 }
 
+/// Alias for get_option without subobjects.
+template<typename T>
+bool get_option_fast(v8::Isolate* isolate, v8::Local<v8::Object> options,
+	std::string_view name, T& value)
+{
+	return get_option(isolate, options, name, value, false);
+}
+
 /// Set named value in V8 object
 /// Dot symbols in option name delimits subobjects name.
 template<typename T>
@@ -78,6 +86,14 @@ bool set_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
 	}
 
 	return options->Set(context, v8pp::to_v8(isolate, name), to_v8(isolate, value)).FromMaybe(false);
+}
+
+/// Alias for set_option without subobjects.
+template<typename T>
+bool set_option_fast(v8::Isolate* isolate, v8::Local<v8::Object> options,
+	std::string_view name, T& value)
+{
+	return set_option(isolate, options, name, value, false);
 }
 
 /// Set named value in V8 object as data property
@@ -111,6 +127,14 @@ bool set_option_data(v8::Isolate* isolate, v8::Local<v8::Object> options,
 	return options->CreateDataProperty(context,
 		v8pp::to_v8(isolate, name).As<v8::Name>(),
 		to_v8(isolate, value)).FromMaybe(false);
+}
+
+/// Alias for set_option_data without subobjects.
+template<typename T>
+bool set_option_data_fast(v8::Isolate* isolate, v8::Local<v8::Object> options,
+	std::string_view name, T& value)
+{
+	return set_option_data(isolate, options, name, value, false);
 }
 
 /// Set named constant in V8 object
