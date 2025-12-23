@@ -173,10 +173,8 @@ public:
 	static void remove_all(v8::Isolate* isolate);
 
 private:
-	using classes_info = std::vector<std::unique_ptr<class_info>>;
+	using classes_info = std::unordered_map<uintptr_t, std::unique_ptr<class_info>>;
 	classes_info classes_;
-
-	classes_info::iterator find(type_info const& type);
 
 	enum class operation
 	{

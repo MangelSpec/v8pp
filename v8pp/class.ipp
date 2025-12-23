@@ -343,15 +343,16 @@ V8PP_IMPL object_registry<Traits>& classes::add(v8::Isolate* isolate, type_info 
 	typename object_registry<Traits>::dtor_function&& dtor)
 {
 	classes* info = instance(operation::add, isolate);
-	auto it = info->find(type);
+	auto it = info->classes_.find(type.id());
 	if (it != info->classes_.end())
 	{
 		//assert(false && "class already registred");
-		throw std::runtime_error((*it)->class_name()
+		throw std::runtime_error(it->second->class_name()
 			+ " is already exist in isolate " + pointer_str(isolate));
 	}
-	info->classes_.emplace_back(new object_registry<Traits>(isolate, type, std::move(dtor)));
-	return *static_cast<object_registry<Traits>*>(info->classes_.back().get());
+	auto registry_ptr = new object_registry<Traits>(isolate, type, std::move(dtor));
+	info->classes_[type.id()] = std::unique_ptr<class_info>(registry_ptr);
+	return *registry_ptr;
 }
 
 template<typename Traits>
@@ -360,13 +361,13 @@ V8PP_IMPL void classes::remove(v8::Isolate* isolate, type_info const& type)
 	classes* info = instance(operation::get, isolate);
 	if (info)
 	{
-		auto it = info->find(type);
+		auto it = info->classes_.find(type.id());
 		if (it != info->classes_.end())
 		{
 			type_info const& traits = type_id<Traits>();
-			if ((*it)->traits != traits)
+			if (it->second->traits != traits)
 			{
-				throw std::runtime_error((*it)->class_name()
+				throw std::runtime_error(it->second->class_name()
 					+ " is already registered in isolate "
 					+ pointer_str(isolate) + " before of "
 					+ class_info(type, traits).class_name());
@@ -387,17 +388,17 @@ V8PP_IMPL object_registry<Traits>& classes::find(v8::Isolate* isolate, type_info
 	type_info const& traits = type_id<Traits>();
 	if (info)
 	{
-		auto it = info->find(type);
+		auto it = info->classes_.find(type.id());
 		if (it != info->classes_.end())
 		{
-			if ((*it)->traits != traits)
+			if (it->second->traits != traits)
 			{
-				throw std::runtime_error((*it)->class_name()
+				throw std::runtime_error(it->second->class_name()
 					+ " is already registered in isolate "
 					+ pointer_str(isolate) + " before of "
 					+ class_info(type, traits).class_name());
 			}
-			return *static_cast<object_registry<Traits>*>(it->get());
+			return *static_cast<object_registry<Traits>*>(it->second.get());
 		}
 	}
 	//assert(false && "class not registered");
@@ -408,15 +409,6 @@ V8PP_IMPL object_registry<Traits>& classes::find(v8::Isolate* isolate, type_info
 V8PP_IMPL void classes::remove_all(v8::Isolate* isolate)
 {
 	instance(operation::remove, isolate);
-}
-
-V8PP_IMPL classes::classes_info::iterator classes::find(type_info const& type)
-{
-	return std::find_if(classes_.begin(), classes_.end(),
-		[&type](classes_info::value_type const& info)
-		{
-			return info->type == type;
-		});
 }
 
 V8PP_IMPL classes* classes::instance(operation op, v8::Isolate* isolate)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string_view>
+#include <cstdint>
 
 namespace v8pp::detail {
 
@@ -8,27 +9,40 @@ namespace v8pp::detail {
 class type_info
 {
 public:
+	constexpr uintptr_t id() const { return id_; }
 	constexpr std::string_view name() const { return name_; }
-	constexpr bool operator==(type_info const& other) const { return name_ == other.name_; }
-	constexpr bool operator!=(type_info const& other) const { return name_ != other.name_; }
+	
+	constexpr bool operator==(type_info const& other) const { return id_ == other.id_; }
+	constexpr bool operator!=(type_info const& other) const { return id_ != other.id_; }
 
 private:
 	template<typename T>
-	constexpr friend type_info type_id();
+	friend type_info type_id();
 
-	constexpr explicit type_info(std::string_view name)
-		: name_(name)
+	constexpr explicit type_info(uintptr_t id, std::string_view name)
+		: id_(id)
+		, name_(name)
 	{
 	}
 
+	uintptr_t id_;
 	std::string_view name_;
 };
+
+// Generate unique compile-time ID per type using function pointer address
+template<typename T>
+static void* type_id_impl()
+{
+	return nullptr;
+}
 
 /// Get type information for type T
 /// The idea is borrowed from https://github.com/Manu343726/ctti
 template<typename T>
-constexpr type_info type_id()
+inline type_info type_id()
 {
+	uintptr_t unique_id = reinterpret_cast<uintptr_t>(&type_id_impl<T>);
+
 #if defined(_MSC_VER) && !defined(__clang__)
 	std::string_view name = __FUNCSIG__;
 	const std::initializer_list<std::string_view> all_prefixes{ "type_id<", "struct ", "class " };
@@ -61,7 +75,7 @@ constexpr type_info type_id()
 	}
 #endif
 
-	return type_info(name);
+	return type_info(unique_id, name);
 }
 
 } // namespace v8pp::detail
