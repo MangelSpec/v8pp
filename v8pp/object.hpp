@@ -91,7 +91,7 @@ bool set_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
 /// Alias for set_option without subobjects.
 template<typename T>
 bool set_option_fast(v8::Isolate* isolate, v8::Local<v8::Object> options,
-	std::string_view name, T& value)
+	std::string_view name, T const& value)
 {
 	return set_option(isolate, options, name, value, false);
 }
@@ -132,7 +132,7 @@ bool set_option_data(v8::Isolate* isolate, v8::Local<v8::Object> options,
 /// Alias for set_option_data without subobjects.
 template<typename T>
 bool set_option_data_fast(v8::Isolate* isolate, v8::Local<v8::Object> options,
-	std::string_view name, T& value)
+	std::string_view name, T const& value)
 {
 	return set_option_data(isolate, options, name, value, false);
 }
