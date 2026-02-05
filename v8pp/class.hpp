@@ -335,10 +335,16 @@ public:
 		v8::AccessorNameGetterCallback getter = &member_get<attribute_type>;
 		v8::AccessorNameSetterCallback setter = &member_set<attribute_type>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr));
-		//class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		// SetAccessor removed from ObjectTemplate in V8 12.9+
+		class_info_.js_function_template()
+				->PrototypeTemplate()
+				->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute(v8::DontDelete));
+#else
 		class_info_.js_function_template()
 				->PrototypeTemplate()
 				->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
+#endif
 		return *this;
 	}
 
@@ -371,8 +377,13 @@ public:
 		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::String> v8_name = v8pp::to_v8(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		// SetAccessor removed from ObjectTemplate in V8 12.9+
+		class_info_.js_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute(v8::DontDelete));
+#else
 		//class_info_.class_function_template()->PrototypeTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
+#endif
 		return *this;
 	}
 
