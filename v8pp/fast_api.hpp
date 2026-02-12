@@ -4,8 +4,11 @@
 
 #include <v8.h>
 
-#if V8_MAJOR_VERSION >= 10
+// V8 10+ supports Fast API callbacks, but some distributions (e.g. Ubuntu libv8-dev)
+// ship V8 10+ without the v8-fast-api-calls.h header. Guard on both version and header.
+#if V8_MAJOR_VERSION >= 10 && __has_include(<v8-fast-api-calls.h>)
 #include <v8-fast-api-calls.h>
+#define V8PP_HAS_FAST_API_HEADER 1
 #endif
 
 namespace v8pp {
@@ -51,7 +54,7 @@ template<typename R, typename C, typename... Args>
 struct is_fast_api_compatible<R(C::*)(Args...) const>
 	: std::bool_constant<is_fast_return_type_v<R> && (is_fast_arg_type_v<Args> && ...)> {};
 
-#if V8_MAJOR_VERSION >= 10
+#ifdef V8PP_HAS_FAST_API_HEADER
 
 /// Fast callback wrapper — generates a static function with the V8 fast API signature.
 /// Uses NTTP to bake the function pointer at compile time so V8 can call it directly.
@@ -62,8 +65,8 @@ struct fast_callback;
 template<typename R, typename... Args, R(*FuncPtr)(Args...)>
 struct fast_callback<FuncPtr>
 {
-	static R call(v8::Local<v8::Object> receiver, Args... args,
-		v8::FastApiCallbackOptions& options)
+	static R call(v8::Local<v8::Object> /*receiver*/, Args... args,
+		v8::FastApiCallbackOptions& /*options*/)
 	{
 		return FuncPtr(args...);
 	}
@@ -113,7 +116,7 @@ struct fast_callback<MemPtr>
 	}
 };
 
-#endif // V8_MAJOR_VERSION >= 10
+#endif // V8PP_HAS_FAST_API_HEADER
 
 } // namespace detail
 

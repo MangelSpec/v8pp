@@ -657,10 +657,6 @@ public:
 
 		static_assert(std::is_member_function_pointer<GetFunction>::value || detail::is_callable<Getter>::value, "GetFunction must be callable");
 
-		using GetClass = std::conditional_t<detail::function_with_object<Getter, T>, T, detail::none>;
-
-		using property_type = v8pp::property<Getter, detail::none, GetClass, detail::none>;
-
 		v8::HandleScope scope(isolate());
 
 		// Store the native function for the constant property in object_registry

@@ -314,9 +314,31 @@ void test_class_()
 		R"({"obj":{"key":"obj","var":10},"arr":[{"key":"0","var":11},{"key":"1","var":12}]})"
 	);
 
+	// Use order-independent comparison since V8 property enumeration order
+	// on prototype templates varies across V8 versions
 	check_eq("JSON.stringify(Y)",
-		run_script<std::string>(context, "JSON.stringify({'obj': new Y(10), 'arr': [new Y(11), new Y(12)] })"),
-		R"({"obj":{"useX":"function useX() { [native code] }","useX_ptr":"function useX_ptr() { [native code] }","toJSON":"function toJSON() { [native code] }","wprop_external3":10,"wprop_external2":10,"wprop_external1":10,"rprop_external3":10,"rprop_external2":10,"rprop_external1":10,"rprop_direct":10,"prop2":10,"prop":10,"wprop2":10,"wprop":10,"rprop":10,"var":10,"konst":99,"fun1":"function fun1() { [native code] }","fun2":"function fun2() { [native code] }","fun3":"function fun3() { [native code] }","fun4":"function fun4() { [native code] }","static_fun":"function static_fun() { [native code] }","static_lambda":"function static_lambda() { [native code] }","extern_fun":"function extern_fun() { [native code] }"},"arr":[{"useX":"function useX() { [native code] }","useX_ptr":"function useX_ptr() { [native code] }","toJSON":"function toJSON() { [native code] }","wprop_external3":11,"wprop_external2":11,"wprop_external1":11,"rprop_external3":11,"rprop_external2":11,"rprop_external1":11,"rprop_direct":11,"prop2":11,"prop":11,"wprop2":11,"wprop":11,"rprop":11,"var":11,"konst":99,"fun1":"function fun1() { [native code] }","fun2":"function fun2() { [native code] }","fun3":"function fun3() { [native code] }","fun4":"function fun4() { [native code] }","static_fun":"function static_fun() { [native code] }","static_lambda":"function static_lambda() { [native code] }","extern_fun":"function extern_fun() { [native code] }"},{"useX":"function useX() { [native code] }","useX_ptr":"function useX_ptr() { [native code] }","toJSON":"function toJSON() { [native code] }","wprop_external3":12,"wprop_external2":12,"wprop_external1":12,"rprop_external3":12,"rprop_external2":12,"rprop_external1":12,"rprop_direct":12,"prop2":12,"prop":12,"wprop2":12,"wprop":12,"rprop":12,"var":12,"konst":99,"fun1":"function fun1() { [native code] }","fun2":"function fun2() { [native code] }","fun3":"function fun3() { [native code] }","fun4":"function fun4() { [native code] }","static_fun":"function static_fun() { [native code] }","static_lambda":"function static_lambda() { [native code] }","extern_fun":"function extern_fun() { [native code] }"}]})"
+		run_script<bool>(context, R"(
+			(function() {
+				var s = JSON.stringify({'obj': new Y(10), 'arr': [new Y(11), new Y(12)]});
+				var r = JSON.parse(s);
+				var props = ['rprop','wprop','wprop2','prop','prop2','rprop_direct',
+					'rprop_external1','rprop_external2','rprop_external3',
+					'wprop_external1','wprop_external2','wprop_external3'];
+				var fns = ['fun1','fun2','fun3','fun4','static_fun','static_lambda',
+					'extern_fun','useX','useX_ptr','toJSON'];
+				function check(o, v) {
+					if (o['var'] !== v || o.konst !== 99) return false;
+					for (var i = 0; i < props.length; i++)
+						if (o[props[i]] !== v) return false;
+					for (var i = 0; i < fns.length; i++)
+						if (typeof o[fns[i]] !== 'string' || o[fns[i]].indexOf('native code') < 0) return false;
+					return Object.keys(o).length === (2 + props.length + fns.length);
+				}
+				return check(r.obj, 10) && check(r.arr[0], 11) && check(r.arr[1], 12)
+					&& r.arr.length === 2;
+			})()
+		)"),
+		true
 	);
 
 	check_eq("Y object", run_script<int>(context, "y = new Y(-100); y.konst + y.var"), -1);

@@ -336,7 +336,7 @@ v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate,
 	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 {
 	using F_type = typename fast_function<FuncPtr>::func_type;
-#if V8_MAJOR_VERSION >= 10
+#ifdef V8PP_HAS_FAST_API_HEADER
 	if constexpr (fast_function<FuncPtr>::compatible)
 	{
 		auto c_func = v8::CFunction::Make(&detail::fast_callback<FuncPtr>::call);

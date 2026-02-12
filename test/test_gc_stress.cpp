@@ -186,7 +186,7 @@ void test_gc_stress_inheritance()
 	v8pp::class_<GCDerived, Traits> derived_class(isolate);
 	derived_class
 		.template ctor<int>()
-		.inherit<GCBase>()
+		.template inherit<GCBase>()
 		.function("get_y", &GCDerived::get_y);
 
 	context.class_("GCBase", base_class);
