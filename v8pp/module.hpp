@@ -117,10 +117,17 @@ public:
 		v8::AccessorNameGetterCallback getter = &var_get<Variable>;
 		v8::AccessorNameSetterCallback setter = &var_set<Variable>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate_, &var);
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
+			v8::PropertyAttribute::DontDelete,
+			v8::SideEffectType::kHasNoSideEffect,
+			v8::SideEffectType::kHasSideEffectToReceiver);
+#else
 		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
 			v8::PropertyAttribute::DontDelete, v8::DEFAULT,
 			v8::SideEffectType::kHasNoSideEffect,
 			v8::SideEffectType::kHasSideEffectToReceiver);
+#endif
 		return *this;
 	}
 
@@ -148,9 +155,15 @@ public:
 		v8::SideEffectType setter_effect = property_type::is_readonly
 			? v8::SideEffectType::kHasSideEffect
 			: v8::SideEffectType::kHasSideEffectToReceiver;
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
+			v8::PropertyAttribute::DontDelete,
+			v8::SideEffectType::kHasNoSideEffect, setter_effect);
+#else
 		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
 			v8::PropertyAttribute::DontDelete, v8::DEFAULT,
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
+#endif
 		return *this;
 	}
 

@@ -79,7 +79,11 @@ struct fast_callback<MemPtr>
 		void* ptr = receiver->GetAlignedPointerFromInternalField(0);
 		if (!ptr)
 		{
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+			options.isolate->ThrowError("Invalid receiver: null C++ object");
+#else
 			options.fallback = true;
+#endif
 			if constexpr (std::is_void_v<R>) return;
 			else return R{};
 		}
@@ -97,7 +101,11 @@ struct fast_callback<MemPtr>
 		void* ptr = receiver->GetAlignedPointerFromInternalField(0);
 		if (!ptr)
 		{
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+			options.isolate->ThrowError("Invalid receiver: null C++ object");
+#else
 			options.fallback = true;
+#endif
 			if constexpr (std::is_void_v<R>) return;
 			else return R{};
 		}

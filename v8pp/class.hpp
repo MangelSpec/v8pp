@@ -586,7 +586,7 @@ public:
 		class_info_.js_function_template()
 				->InstanceTemplate()
 				->SetNativeDataProperty(v8_name, getter, setter, data,
-					v8::PropertyAttribute(v8::DontDelete), v8::DEFAULT,
+					v8::PropertyAttribute(v8::DontDelete),
 					v8::SideEffectType::kHasNoSideEffect,
 					v8::SideEffectType::kHasSideEffectToReceiver);
 #else
@@ -636,7 +636,7 @@ public:
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 		// SetAccessor removed from ObjectTemplate in V8 12.9+
 		class_info_.js_function_template()->InstanceTemplate()->SetNativeDataProperty(v8_name, getter, setter, data,
-			v8::PropertyAttribute(v8::DontDelete), v8::DEFAULT,
+			v8::PropertyAttribute(v8::DontDelete),
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #else
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data,
