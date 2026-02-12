@@ -18,6 +18,7 @@ endif()
 option(BUILD_SHARED_LIBS "Build shared library" ON)
 option(BUILD_TESTING "Build and run tests" OFF)
 option(BUILD_DOCUMENTATION "Build documentation" OFF)
+option(BUILD_BENCHMARKS "Build benchmarks" OFF)
 
 # Custom project options
 option(V8PP_HEADER_ONLY "Header-only library" OFF)
@@ -41,6 +42,10 @@ if(BUILD_TESTING)
 	enable_testing()
 	add_subdirectory(plugins)
 	add_subdirectory(test)
+endif()
+
+if(BUILD_BENCHMARKS)
+	add_subdirectory(bench)
 endif()
 
 if(BUILD_DOCUMENTATION)
