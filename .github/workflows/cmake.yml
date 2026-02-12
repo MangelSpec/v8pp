@@ -48,8 +48,10 @@ jobs:
       if: startsWith(matrix.os, 'windows')
       uses: actions/cache@v4
       with:
-        path: ${{github.workspace}}/build/v8-v143-x64*
-        key: nuget-v8-v143-x64-${{runner.os}}
+        path: |
+          ${{github.workspace}}/build/v8-v143-x64*
+          ${{github.workspace}}/build/v8.redist-v143-x64*
+        key: nuget-v8-v143-x64-${{runner.os}}-v2
 
     - name: Install V8 nuget
       if: startsWith(matrix.os, 'windows')
