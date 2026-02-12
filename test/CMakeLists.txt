@@ -7,6 +7,7 @@ add_executable(v8pp_test
 	test_call_v8.cpp
 	test_class.cpp
 	test_context.cpp
+	test_context_store.cpp
 	test_convert.cpp
 	test_fast_api.cpp
 	test_function.cpp

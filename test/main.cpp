@@ -16,6 +16,7 @@ void run_tests()
 	void test_type_info();
 	void test_utility();
 	void test_context();
+	void test_context_store();
 	void test_convert();
 	void test_throw_ex();
 	void test_call_v8();
@@ -37,6 +38,7 @@ void run_tests()
 		{ "test_type_info", test_type_info },
 		{"test_utility", test_utility},
 		{"test_context", test_context},
+		{"test_context_store", test_context_store},
 		{"test_convert", test_convert},
 		{"test_throw_ex", test_throw_ex},
 		{"test_function", test_function},

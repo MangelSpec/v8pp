@@ -25,6 +25,7 @@ set(V8PP_HEADERS
 	call_v8.hpp
 	class.hpp
 	context.hpp
+	context_store.hpp
 	convert.hpp
 	function.hpp
 	json.hpp
@@ -43,6 +44,7 @@ set(V8PP_HEADERS
 if(V8PP_HEADER_ONLY)
 	list(APPEND V8PP_HEADERS
 		class.ipp
+		context_store.ipp
 		json.ipp
 		throw_ex.ipp
 		version.ipp
@@ -52,6 +54,7 @@ else()
 	set(V8PP_SOURCES
 		class.cpp
 		context.cpp
+		context_store.cpp
 		convert.cpp
 		json.cpp
 		throw_ex.cpp
