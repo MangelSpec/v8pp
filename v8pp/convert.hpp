@@ -1130,16 +1130,18 @@ struct convert<std::chrono::time_point<Clock, Duration>, void>
 	{
 		if (!is_valid(isolate, value)) return std::nullopt;
 		double ms = value->NumberValue(isolate->GetCurrentContext()).FromJust();
+		// Convert via integer milliseconds to avoid floating-point precision loss
+		// when scaling large epoch timestamps to finer-grained durations (e.g. nanoseconds)
 		auto epoch_duration = std::chrono::duration_cast<Duration>(
-			std::chrono::duration<double, std::milli>(ms));
+			std::chrono::milliseconds(std::llround(ms)));
 		return time_point_type(epoch_duration);
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, from_type const& value)
 	{
-		auto epoch_ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+		auto epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 			value.time_since_epoch());
-		return v8::Number::New(isolate, epoch_ms.count());
+		return v8::Number::New(isolate, static_cast<double>(epoch_ms.count()));
 	}
 };
 

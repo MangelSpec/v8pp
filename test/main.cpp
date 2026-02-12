@@ -144,24 +144,27 @@ int main(int argc, char const* argv[])
 	}
 
 	int result = EXIT_SUCCESS;
-	try
+	if (!scripts.empty())
 	{
-		v8pp::context context;
+		try
+		{
+			v8pp::context context;
 
-		if (!lib_path.empty())
-		{
-			context.set_lib_path(lib_path);
+			if (!lib_path.empty())
+			{
+				context.set_lib_path(lib_path);
+			}
+			for (std::string const& script : scripts)
+			{
+				v8::HandleScope scope(context.isolate());
+				context.run_file(script);
+			}
 		}
-		for (std::string const& script : scripts)
+		catch (std::exception const& ex)
 		{
-			v8::HandleScope scope(context.isolate());
-			context.run_file(script);
+			std::cerr << ex.what() << std::endl;
+			result = EXIT_FAILURE;
 		}
-	}
-	catch (std::exception const& ex)
-	{
-		std::cerr << ex.what() << std::endl;
-		result = EXIT_FAILURE;
 	}
 
 	v8::V8::Dispose();
