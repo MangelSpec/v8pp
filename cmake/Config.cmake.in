@@ -2,5 +2,8 @@ if(NOT TARGET v8pp::v8pp)
     # Provide path for scripts
     list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 
+    include(CMakeFindDependencyMacro)
+    find_dependency(V8)
+
     include("${CMAKE_CURRENT_LIST_DIR}/@targets_export_name@.cmake")
 endif()

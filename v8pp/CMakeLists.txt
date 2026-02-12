@@ -62,13 +62,12 @@ else()
 	)
 endif()
 
-#set(CMAKE_CXX_RTTI OFF)
 if(MSVC)
 	set(V8PP_COMPILE_OPTIONS /GR- /EHsc /permissive- /W4)
 	# disable specific warnings
 	list(APPEND V8PP_COMPILE_OPTIONS /wd4190)
 	# set warning level 3 for system headers
-	list(APPEND V8PP_COMPILE_OPTIONS /experimental:external /external:anglebrackets /external:W3)
+	list(APPEND V8PP_COMPILE_OPTIONS /external:anglebrackets /external:W3)
 else()
 	set(V8PP_COMPILE_OPTIONS -frtti -fexceptions -Wall -Wextra -Wpedantic)
 endif()
@@ -95,9 +94,6 @@ else()
 		target_link_libraries(v8pp PUBLIC ${CMAKE_DL_LIBS})
 	endif()
 endif()
-
-
-#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${V8PP_HEADERS} ${V8PP_SOURCES})
 
 # Install
 include(CMakePackageConfigHelpers)

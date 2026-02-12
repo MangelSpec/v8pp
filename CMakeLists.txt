@@ -20,13 +20,13 @@ option(BUILD_TESTING "Build and run tests" OFF)
 option(BUILD_DOCUMENTATION "Build documentation" OFF)
 
 # Custom project options
-set(V8PP_HEADER_ONLY 0 CACHE BOOL "Header-only library")
+option(V8PP_HEADER_ONLY "Header-only library" OFF)
 set(V8PP_ISOLATE_DATA_SLOT 0 CACHE STRING "v8::Isolate data slot number, used in v8pp for shared data")
 set(V8PP_PLUGIN_INIT_PROC_NAME "v8pp_module_init" CACHE STRING "v8pp plugin initialization procedure name")
 set(V8PP_PLUGIN_SUFFIX ${CMAKE_SHARED_MODULE_SUFFIX} CACHE STRING "v8pp plugin filename suffix")
-set(V8PP_PRETTIFY_TYPENAMES 1 CACHE BOOL "v8pp registered classes will have prettier typeid names")
-set(V8_COMPRESS_POINTERS 1 CACHE BOOL "Use new V8 ABI with V8_COMPRESS_POINTERS and V8_31BIT_SMIS_ON_64BIT_ARCH")
-set(V8_ENABLE_SANDBOX 0 CACHE BOOL "Enable sandoxing in V8")
+option(V8PP_PRETTIFY_TYPENAMES "v8pp registered classes will have prettier typeid names" ON)
+option(V8_COMPRESS_POINTERS "Use new V8 ABI with V8_COMPRESS_POINTERS and V8_31BIT_SMIS_ON_64BIT_ARCH" ON)
+option(V8_ENABLE_SANDBOX "Enable sandboxing in V8" OFF)
 
 if(BUILD_SHARED_LIBS AND WIN32)
 	set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true)
