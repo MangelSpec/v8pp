@@ -12,7 +12,9 @@
 #if defined(_M_AMD64) && !defined(_AMD64_)
 #define _AMD64_
 #endif
+#define NOMINMAX
 #include <stringapiset.h>
+#undef NOMINMAX
 #endif
 #include <limits>
 #include <memory>
