@@ -428,9 +428,13 @@ public:
 	template<typename Value>
 	class_& static_(std::string_view const& name, Value const& value, bool readonly = false)
 	{
-		v8::HandleScope scope(isolate());
+		v8::Isolate* iso = isolate();
+		v8::HandleScope scope(iso);
+		v8::Local<v8::Context> context = iso->GetCurrentContext();
 
-		class_info_.js_function_template()->GetFunction(isolate()->GetCurrentContext()).ToLocalChecked()->DefineOwnProperty(isolate()->GetCurrentContext(), v8pp::to_v8(isolate(), name), to_v8(isolate(), value), v8::PropertyAttribute(v8::DontDelete | (readonly ? v8::ReadOnly : 0))).FromJust();
+		class_info_.js_function_template()->GetFunction(context).ToLocalChecked()
+			->DefineOwnProperty(context, v8pp::to_v8(iso, name), to_v8(iso, value),
+				v8::PropertyAttribute(v8::DontDelete | (readonly ? v8::ReadOnly : 0))).FromJust();
 		return *this;
 	}
 

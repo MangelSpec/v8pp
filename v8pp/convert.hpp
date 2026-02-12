@@ -82,7 +82,11 @@ struct convert<String, typename std::enable_if<detail::is_string<String>::value>
 		}
 
 		v8::HandleScope scope(isolate);
-		v8::Local<v8::String> str = value->ToString(isolate->GetCurrentContext()).ToLocalChecked();
+		v8::Local<v8::String> str;
+		if (!value->ToString(isolate->GetCurrentContext()).ToLocal(&str))
+		{
+			throw invalid_argument(isolate, value, "String");
+		}
 
 #if V8_MAJOR_VERSION > 13 || (V8_MAJOR_VERSION == 13 && V8_MINOR_VERSION >= 3)
 		if constexpr (sizeof(Char) == 1)
@@ -727,7 +731,11 @@ struct convert<Mapping, typename std::enable_if<detail::is_mapping<Mapping>::val
 		v8::HandleScope scope(isolate);
 		v8::Local<v8::Context> context = isolate->GetCurrentContext();
 		v8::Local<v8::Object> object = value.As<v8::Object>();
-		v8::Local<v8::Array> prop_names = object->GetPropertyNames(context).ToLocalChecked();
+		v8::Local<v8::Array> prop_names;
+		if (!object->GetPropertyNames(context).ToLocal(&prop_names))
+		{
+			throw invalid_argument(isolate, value, "Object");
+		}
 
 		from_type result{};
 		for (uint32_t i = 0, count = prop_names->Length(); i < count; ++i)

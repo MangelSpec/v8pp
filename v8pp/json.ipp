@@ -13,7 +13,11 @@ V8PP_IMPL std::string json_str(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	v8::HandleScope scope(isolate);
 
 	v8::Local<v8::Context> context = isolate->GetCurrentContext();
-	v8::Local<v8::String> result = v8::JSON::Stringify(context, value).ToLocalChecked();
+	v8::Local<v8::String> result;
+	if (!v8::JSON::Stringify(context, value).ToLocal(&result))
+	{
+		return std::string();
+	}
 	return v8pp::from_v8<std::string>(isolate, result);
 }
 
@@ -45,7 +49,11 @@ V8PP_IMPL v8::Local<v8::Object> json_object(v8::Isolate* isolate, v8::Local<v8::
 
 	v8::Local<v8::Context> context = isolate->GetCurrentContext();
 	v8::Local<v8::Object> result = v8::Object::New(isolate);
-	v8::Local<v8::Array> prop_names = object->GetPropertyNames(context).ToLocalChecked();
+	v8::Local<v8::Array> prop_names;
+	if (!object->GetPropertyNames(context).ToLocal(&prop_names))
+	{
+		return scope.Escape(result);
+	}
 	for (uint32_t i = 0, count = prop_names->Length(); i < count; ++i)
 	{
 		v8::Local<v8::Value> name, value;
@@ -61,7 +69,7 @@ V8PP_IMPL v8::Local<v8::Object> json_object(v8::Isolate* isolate, v8::Local<v8::
 			{
 				value = v8::JSON::Stringify(context, value).FromMaybe(v8::String::Empty(isolate));
 			}
-			result->Set(context, name, value).FromJust();
+			result->Set(context, name, value).FromMaybe(false);
 		}
 	}
 	return scope.Escape(result);

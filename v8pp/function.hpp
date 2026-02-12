@@ -199,9 +199,13 @@ template<typename F, typename Traits = raw_ptr_traits>
 v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view name, F&& func)
 {
 	using F_type = typename std::decay_t<F>;
-	v8::Local<v8::Function> fn = v8::Function::New(isolate->GetCurrentContext(),
+	v8::Local<v8::Function> fn;
+	if (!v8::Function::New(isolate->GetCurrentContext(),
 		&detail::forward_function<Traits, F_type>,
-		detail::external_data::set(isolate, std::forward<F_type>(func))).ToLocalChecked();
+		detail::external_data::set(isolate, std::forward<F_type>(func))).ToLocal(&fn))
+	{
+		return {};
+	}
 	if (!name.empty())
 	{
 		fn->SetName(to_v8(isolate, name));
