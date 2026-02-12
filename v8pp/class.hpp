@@ -21,12 +21,20 @@ namespace v8pp::detail {
 
 struct class_info
 {
+	static constexpr uint32_t kMagic = 0xC1A5517F;
+
+	uint32_t const magic = kMagic;
 	type_info const type;
 	type_info const traits;
 
 	class_info(type_info const& type, type_info const& traits);
 
-	virtual ~class_info() = default; // make virtual to delete derived object_registry
+	virtual ~class_info()
+	{
+		const_cast<uint32_t&>(magic) = 0;
+	}
+
+	bool is_valid() const { return magic == kMagic; }
 
 	std::string class_name() const;
 };

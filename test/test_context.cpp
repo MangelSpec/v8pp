@@ -121,4 +121,51 @@ void test_context()
 		}
 		isolate->Dispose();
 	}
+
+	// Crash safety: require() after context destruction should throw, not crash
+	{
+		v8::Isolate* isolate = v8pp::context::create_isolate();
+		{
+			v8::Isolate::Scope isolate_scope(isolate);
+			v8::HandleScope outer_scope(isolate);
+
+			v8::Global<v8::Function> require_fn;
+			v8::Global<v8::Context> saved_ctx;
+
+			{
+				v8pp::context ctx(isolate, nullptr, true, false);
+				v8::HandleScope scope(isolate);
+				v8::Context::Scope context_scope(ctx.impl());
+				saved_ctx.Reset(isolate, ctx.impl());
+
+				// Capture the require function
+				v8::Local<v8::Value> require_val;
+				check("get require",
+					ctx.global()->Get(isolate->GetCurrentContext(),
+						v8pp::to_v8(isolate, "require")).ToLocal(&require_val));
+				check("require is function", require_val->IsFunction());
+				require_fn.Reset(isolate, require_val.As<v8::Function>());
+			}
+			// ctx is destroyed here, but isolate is still alive
+
+			// Call require() from the saved context — should get an error, not crash
+			{
+				v8::HandleScope scope(isolate);
+				v8::Local<v8::Context> local_ctx = saved_ctx.Get(isolate);
+				v8::Context::Scope context_scope(local_ctx);
+				v8::TryCatch try_catch(isolate);
+
+				v8::Local<v8::Value> args[] = { v8pp::to_v8(isolate, "nonexistent") };
+				v8::Local<v8::Function> fn = require_fn.Get(isolate);
+				auto result = fn->Call(local_ctx, local_ctx->Global(), 1, args);
+
+				check("require after destroy caught exception",
+					try_catch.HasCaught() || result.IsEmpty());
+			}
+
+			saved_ctx.Reset();
+			require_fn.Reset();
+		}
+		isolate->Dispose();
+	}
 }

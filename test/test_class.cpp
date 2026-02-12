@@ -295,6 +295,20 @@ void test_class_()
 			"desc.set.call({}, 42); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
 
+	// Crash safety: deep prototype chain beyond depth limit should not hang
+	check_eq("deep prototype chain beyond depth limit",
+		run_script<std::string>(context,
+			"var obj = {};"
+			"for (var i = 0; i < 20; i++) { obj = Object.create(obj); }"
+			"try { var x = new X(); x.fun1.call(obj, 1); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+
+	// Crash safety: normal direct unwrap (fast path) still works
+	check_eq("direct unwrap fast path", run_script<int>(context, "x = new X(3); x.fun1(1)"), 4);
+
+	// Crash safety: inheritance chain unwrap still works
+	check_eq("inheritance unwrap", run_script<int>(context, "y = new Y(5); y.fun1(10)"), 15);
+
 	check_eq("JSON.stringify(X)",
 		run_script<std::string>(context, "JSON.stringify({'obj': new X(10), 'arr': [new X(11), new X(12)] })"),
 		R"({"obj":{"key":"obj","var":10},"arr":[{"key":"0","var":11},{"key":"1","var":12}]})"
@@ -325,7 +339,7 @@ void test_class_()
 	check_eq("y3.var", y3->var, -3);
 
 	run_script<int>(context, "x = new X; for (i = 0; i < 10; ++i) { y = new Y(i); y.useX(x); y.useX_ptr(x); }");
-	check_eq("Y count", Y::instance_count, 13 + 4); // 13 + y + y1 + y2 + y3
+	check_eq("Y count", Y::instance_count, 14 + 4); // 14 + y + y1 + y2 + y3 (14 includes extra Y from unwrap test)
 	run_script<int>(context, "y = null; 0");
 
 	v8pp::class_<Y, Traits>::unreference_external(isolate, y1);
