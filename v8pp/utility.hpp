@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <concepts>
 #include <functional>
 #include <memory>
@@ -125,6 +126,75 @@ struct is_array<std::array<T, N>> : std::true_type
 {
 	static constexpr size_t length = N;
 };
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_set<T> — set-like containers (insert but not emplace_back)
+//
+template<typename T>
+concept set_like = !is_string<T>::value && !mapping<T> && !sequence<T>
+	&& requires(T t, typename T::value_type v) {
+		t.begin();
+		t.end();
+		t.insert(std::move(v));
+	};
+
+template<typename T>
+struct is_set : std::bool_constant<set_like<T>>
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_pair<T>
+//
+template<typename T>
+struct is_pair : std::false_type
+{
+};
+
+template<typename K, typename V>
+struct is_pair<std::pair<K, V>> : std::true_type
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_duration<T>
+//
+template<typename T>
+struct is_duration : std::false_type
+{
+};
+
+template<typename Rep, typename Period>
+struct is_duration<std::chrono::duration<Rep, Period>> : std::true_type
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_time_point<T>
+//
+template<typename T>
+struct is_time_point : std::false_type
+{
+};
+
+template<typename Clock, typename Duration>
+struct is_time_point<std::chrono::time_point<Clock, Duration>> : std::true_type
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// typed_array_trait<T> — maps C++ types to V8 TypedArray types
+//
+template<typename T>
+struct typed_array_trait;
+
+template<typename T>
+concept typed_array_element = requires { typename typed_array_trait<T>::type; };
 
 /////////////////////////////////////////////////////////////////////////////
 //

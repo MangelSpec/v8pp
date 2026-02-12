@@ -3,10 +3,16 @@
 
 #include "test.hpp"
 
+#include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
 #include <list>
-#include <vector>
 #include <map>
+#include <set>
+#include <span>
+#include <unordered_set>
+#include <vector>
 
 template<typename T, typename U>
 void test_conv(v8::Isolate* isolate, T value, U expected)
@@ -309,28 +315,18 @@ void check_range(v8::Isolate* isolate)
 	variant_check<T> check_range{ isolate };
 
 	T zero{ 0 };
-	T min, max;
-	if constexpr (std::same_as<T, int64_t>)
-	{
-		min = V8_MIN_INT;
-		max = V8_MAX_INT;
-	}
-	else if constexpr (std::same_as<T, uint64_t>)
-	{
-		min = 0;
-		max = V8_MAX_INT;
-	}
-	else
-	{
-		min = std::numeric_limits<T>::lowest();
-		max = std::numeric_limits<T>::max();
-	}
+	T min = std::numeric_limits<T>::lowest();
+	T max = std::numeric_limits<T>::max();
 
 	check_range(zero);
 	check_range(min);
 	check_range(max);
-	check_range.check_ex(std::nextafter(double(min), std::numeric_limits<double>::lowest())); // like min - 1 (out of range)
-	check_range.check_ex(std::nextafter(double(max), std::numeric_limits<double>::max())); // like max + 1 (out of range)
+	if constexpr (sizeof(T) <= sizeof(uint32_t))
+	{
+		// For <=32-bit types, test out-of-range doubles
+		check_range.check_ex(std::nextafter(double(min), std::numeric_limits<double>::lowest()));
+		check_range.check_ex(std::nextafter(double(max), std::numeric_limits<double>::max()));
+	}
 }
 
 template<typename... Ts>
@@ -411,12 +407,12 @@ void test_convert_variant(v8::Isolate* isolate)
 	check_vector(std::vector<float>{}, 0.f, std::optional<std::string>{});
 
 	// The order here matters
-	variant_check<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, /*int64_t, uint64_t,*/ float, double> order_check{ isolate };
+	variant_check<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t, float, double> order_check{ isolate };
 	order_check(
 		std::numeric_limits<int8_t>::min(), std::numeric_limits<uint8_t>::max(),
 		std::numeric_limits<int16_t>::min(), std::numeric_limits<uint16_t>::max(),
 		std::numeric_limits<int32_t>::min(), std::numeric_limits<uint32_t>::max(),
-		//TODO: V8_MIN_INT, V8_MAX_INT,
+		std::numeric_limits<int64_t>::min(), std::numeric_limits<uint64_t>::max(),
 		std::numeric_limits<float>::lowest(), std::numeric_limits<double>::max());
 
 	variant_check<bool, int8_t> simple_arithmetic{ isolate };
@@ -429,7 +425,7 @@ void test_convert_variant(v8::Isolate* isolate)
 	objects_only.check_ex(std::string{ "test" });
 	objects_only.check_ex(1.);
 
-	// Note: Not all values of uint64_t/int64_t are possible since v8 stores numeric values as doubles
+	// BigInt conversion covers full int64_t/uint64_t range
 	check_ranges<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t>(isolate);
 
 	// test map
@@ -686,6 +682,314 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 	check("try shared_ptr<V> from int", !v8pp::try_from_v8<std::shared_ptr<V>>(isolate, v8pp::to_v8(isolate, 42)));
 }
 
+void test_convert_bigint(v8::Isolate* isolate)
+{
+	// Basic round-trip for int64_t
+	test_conv(isolate, int64_t{0});
+	test_conv(isolate, int64_t{42});
+	test_conv(isolate, int64_t{-42});
+	test_conv(isolate, std::numeric_limits<int64_t>::min());
+	test_conv(isolate, std::numeric_limits<int64_t>::max());
+
+	// Basic round-trip for uint64_t
+	test_conv(isolate, uint64_t{0});
+	test_conv(isolate, uint64_t{42});
+	test_conv(isolate, std::numeric_limits<uint64_t>::max());
+
+	// Values beyond double precision round-trip exactly through BigInt
+	int64_t big_signed = int64_t{1} << 60;
+	test_conv(isolate, big_signed);
+	test_conv(isolate, -big_signed);
+
+	uint64_t big_unsigned = uint64_t{1} << 63;
+	test_conv(isolate, big_unsigned);
+
+	// to_v8 produces BigInt
+	auto v8_val = v8pp::to_v8(isolate, int64_t{123});
+	check("int64_t to_v8 is BigInt", v8_val->IsBigInt());
+
+	auto v8_uval = v8pp::to_v8(isolate, uint64_t{456});
+	check("uint64_t to_v8 is BigInt", v8_uval->IsBigInt());
+
+	// from_v8 accepts Number for ergonomics
+	auto num_val = v8::Number::New(isolate, 42.0);
+	check_eq("int64_t from Number", v8pp::from_v8<int64_t>(isolate, num_val), int64_t{42});
+	check_eq("uint64_t from Number", v8pp::from_v8<uint64_t>(isolate, num_val), uint64_t{42});
+
+	// from_v8 rejects non-numeric types
+	check_ex<v8pp::invalid_argument>("int64_t from string", [isolate]()
+	{
+		v8pp::from_v8<int64_t>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+	check_ex<v8pp::invalid_argument>("uint64_t from bool", [isolate]()
+	{
+		v8pp::from_v8<uint64_t>(isolate, v8pp::to_v8(isolate, true));
+	});
+
+	// try_from_v8 for BigInt
+	auto try_i64 = v8pp::try_from_v8<int64_t>(isolate, v8pp::to_v8(isolate, int64_t{-999}));
+	check("try int64_t valid", try_i64.has_value());
+	check_eq("try int64_t value", *try_i64, int64_t{-999});
+	check("try int64_t from string", !v8pp::try_from_v8<int64_t>(isolate, v8pp::to_v8(isolate, "abc")));
+}
+
+void test_convert_set(v8::Isolate* isolate)
+{
+	// std::set round-trip
+	std::set<int> int_set{1, 2, 3, 4, 5};
+	auto v8_val = v8pp::to_v8(isolate, int_set);
+	check("set to_v8 is Array", v8_val->IsArray());
+	auto result = v8pp::from_v8<std::set<int>>(isolate, v8_val);
+	check_eq("set round-trip", result, int_set);
+
+	// std::unordered_set round-trip
+	std::unordered_set<std::string> str_set{"hello", "world"};
+	auto v8_str = v8pp::to_v8(isolate, str_set);
+	check("unordered_set to_v8 is Array", v8_str->IsArray());
+	auto str_result = v8pp::from_v8<std::unordered_set<std::string>>(isolate, v8_str);
+	check_eq("unordered_set round-trip", str_result, str_set);
+
+	// Empty set
+	std::set<int> empty_set;
+	auto v8_empty = v8pp::to_v8(isolate, empty_set);
+	auto empty_result = v8pp::from_v8<std::set<int>>(isolate, v8_empty);
+	check("empty set", empty_result.empty());
+
+	// Invalid input
+	check_ex<v8pp::invalid_argument>("set from non-array", [isolate]()
+	{
+		v8pp::from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, 42));
+	});
+
+	// try_from_v8
+	auto try_set = v8pp::try_from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, std::set<int>{10, 20}));
+	check("try set valid", try_set.has_value());
+	check_eq("try set size", try_set->size(), size_t{2});
+	check("try set from int", !v8pp::try_from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, 42)));
+}
+
+void test_convert_pair(v8::Isolate* isolate)
+{
+	// Basic round-trip
+	std::pair<int, std::string> p{42, "hello"};
+	auto v8_val = v8pp::to_v8(isolate, p);
+	check("pair to_v8 is Array", v8_val->IsArray());
+	auto result = v8pp::from_v8<std::pair<int, std::string>>(isolate, v8_val);
+	check_eq("pair first", result.first, 42);
+	check_eq("pair second", result.second, std::string("hello"));
+
+	// pair<double, bool>
+	std::pair<double, bool> p2{3.14, true};
+	test_conv(isolate, p2);
+
+	// Invalid: non-array
+	check_ex<v8pp::invalid_argument>("pair from int", [isolate]()
+	{
+		v8pp::from_v8<std::pair<int, int>>(isolate, v8pp::to_v8(isolate, 42));
+	});
+
+	// Invalid: wrong array length
+	check_ex<v8pp::invalid_argument>("pair from 3-element array", [isolate]()
+	{
+		v8pp::from_v8<std::pair<int, int>>(isolate, v8pp::to_v8(isolate, std::vector<int>{1, 2, 3}));
+	});
+
+	// try_from_v8
+	auto try_pair = v8pp::try_from_v8<std::pair<int, bool>>(isolate,
+		v8pp::to_v8(isolate, std::pair<int, bool>{7, false}));
+	check("try pair valid", try_pair.has_value());
+	check_eq("try pair first", try_pair->first, 7);
+	check_eq("try pair second", try_pair->second, false);
+	check("try pair from string", !v8pp::try_from_v8<std::pair<int, int>>(isolate, v8pp::to_v8(isolate, "x")));
+}
+
+void test_convert_path(v8::Isolate* isolate)
+{
+	// Basic round-trip
+	std::filesystem::path p("some/path/file.txt");
+	auto v8_val = v8pp::to_v8(isolate, p);
+	check("path to_v8 is String", v8_val->IsString());
+	auto result = v8pp::from_v8<std::filesystem::path>(isolate, v8_val);
+	check_eq("path round-trip", result, p);
+
+	// Empty path
+	test_conv(isolate, std::filesystem::path(""), std::filesystem::path(""));
+
+	// try_from_v8
+	auto try_path = v8pp::try_from_v8<std::filesystem::path>(isolate, v8pp::to_v8(isolate, std::filesystem::path("test")));
+	check("try path valid", try_path.has_value());
+	check_eq("try path value", *try_path, std::filesystem::path("test"));
+	check("try path from empty handle", !v8pp::try_from_v8<std::filesystem::path>(isolate, v8::Local<v8::Value>()));
+}
+
+void test_convert_chrono(v8::Isolate* isolate)
+{
+	using namespace std::chrono;
+
+	// duration: milliseconds round-trip
+	auto ms_val = milliseconds{1500};
+	auto v8_ms = v8pp::to_v8(isolate, ms_val);
+	check("duration to_v8 is Number", v8_ms->IsNumber());
+	auto ms_result = v8pp::from_v8<milliseconds>(isolate, v8_ms);
+	check_eq("milliseconds round-trip", ms_result.count(), int64_t{1500});
+
+	// duration: seconds to Number (converts to ms internally)
+	auto sec_val = seconds{3};
+	auto v8_sec = v8pp::to_v8(isolate, sec_val);
+	double sec_ms = v8_sec->NumberValue(isolate->GetCurrentContext()).FromJust();
+	check_eq("seconds to_v8 as ms", sec_ms, 3000.0);
+	auto sec_result = v8pp::from_v8<seconds>(isolate, v8_sec);
+	check_eq("seconds round-trip", sec_result.count(), int64_t{3});
+
+	// duration: microseconds
+	auto us_val = microseconds{123456};
+	test_conv(isolate, us_val);
+
+	// duration: invalid input
+	check_ex<v8pp::invalid_argument>("duration from string", [isolate]()
+	{
+		v8pp::from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+
+	// time_point: system_clock round-trip
+	auto now = system_clock::now();
+	auto now_ms = time_point_cast<milliseconds>(now);
+	auto v8_now = v8pp::to_v8(isolate, now_ms);
+	check("time_point to_v8 is Number", v8_now->IsNumber());
+	auto now_result = v8pp::from_v8<system_clock::time_point>(isolate, v8_now);
+	auto now_result_ms = time_point_cast<milliseconds>(now_result);
+	check_eq("time_point round-trip ms",
+		now_result_ms.time_since_epoch().count(),
+		now_ms.time_since_epoch().count());
+
+	// time_point: epoch (zero)
+	system_clock::time_point epoch{};
+	auto v8_epoch = v8pp::to_v8(isolate, epoch);
+	double epoch_ms = v8_epoch->NumberValue(isolate->GetCurrentContext()).FromJust();
+	check_eq("epoch to_v8", epoch_ms, 0.0);
+
+	// time_point: invalid input
+	check_ex<v8pp::invalid_argument>("time_point from string", [isolate]()
+	{
+		v8pp::from_v8<system_clock::time_point>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+
+	// try_from_v8 for duration
+	auto try_dur = v8pp::try_from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, milliseconds{42}));
+	check("try duration valid", try_dur.has_value());
+	check_eq("try duration value", try_dur->count(), int64_t{42});
+	check("try duration from string", !v8pp::try_from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, "x")));
+}
+
+void test_convert_arraybuffer(v8::Isolate* isolate)
+{
+	// Basic round-trip: vector<uint8_t> -> ArrayBuffer -> vector<uint8_t>
+	std::vector<uint8_t> data{0, 1, 2, 127, 255};
+	auto v8_val = v8pp::to_v8(isolate, data);
+	check("vector<uint8_t> to_v8 is ArrayBuffer", v8_val->IsArrayBuffer());
+	auto result = v8pp::from_v8<std::vector<uint8_t>>(isolate, v8_val);
+	check_eq("arraybuffer round-trip size", result.size(), data.size());
+	check("arraybuffer round-trip data", result == data);
+
+	// Empty vector
+	std::vector<uint8_t> empty;
+	auto v8_empty = v8pp::to_v8(isolate, empty);
+	check("empty vector to_v8 is ArrayBuffer", v8_empty->IsArrayBuffer());
+	auto empty_result = v8pp::from_v8<std::vector<uint8_t>>(isolate, v8_empty);
+	check("empty arraybuffer", empty_result.empty());
+
+	// from_v8 from ArrayBufferView (Uint8Array)
+	{
+		v8::EscapableHandleScope scope(isolate);
+		std::vector<uint8_t> src{10, 20, 30};
+		auto ab = v8pp::to_v8(isolate, src);
+		auto typed = v8::Uint8Array::New(ab.As<v8::ArrayBuffer>(), 0, 3);
+		auto view_result = v8pp::from_v8<std::vector<uint8_t>>(isolate, typed);
+		check("from Uint8Array", view_result == src);
+	}
+
+	// Invalid input
+	check_ex<v8pp::invalid_argument>("vector<uint8_t> from int", [isolate]()
+	{
+		v8pp::from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, 42));
+	});
+	check_ex<v8pp::invalid_argument>("vector<uint8_t> from string", [isolate]()
+	{
+		v8pp::from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+
+	// try_from_v8
+	auto try_buf = v8pp::try_from_v8<std::vector<uint8_t>>(isolate,
+		v8pp::to_v8(isolate, std::vector<uint8_t>{5, 6, 7}));
+	check("try arraybuffer valid", try_buf.has_value());
+	check_eq("try arraybuffer size", try_buf->size(), size_t{3});
+	check("try arraybuffer from string",
+		!v8pp::try_from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, "x")));
+}
+
+void test_convert_span(v8::Isolate* isolate)
+{
+	// span<uint8_t> -> Uint8Array
+	{
+		std::vector<uint8_t> data{1, 2, 3, 4, 5};
+		std::span<uint8_t> sp(data);
+		auto v8_val = v8pp::to_v8(isolate, sp);
+		check("span<uint8_t> to_v8 is Uint8Array", v8_val->IsUint8Array());
+		// Read back through ArrayBufferView
+		auto view = v8_val.As<v8::Uint8Array>();
+		check_eq("span<uint8_t> length", static_cast<size_t>(view->Length()), data.size());
+	}
+
+	// span<int32_t> -> Int32Array
+	{
+		std::vector<int32_t> data{-1, 0, 1, 100};
+		std::span<int32_t> sp(data);
+		auto v8_val = v8pp::to_v8(isolate, sp);
+		check("span<int32_t> to_v8 is Int32Array", v8_val->IsInt32Array());
+		auto view = v8_val.As<v8::Int32Array>();
+		check_eq("span<int32_t> length", static_cast<size_t>(view->Length()), data.size());
+	}
+
+	// span<float> -> Float32Array
+	{
+		std::vector<float> data{1.0f, 2.5f, 3.14f};
+		std::span<float> sp(data);
+		auto v8_val = v8pp::to_v8(isolate, sp);
+		check("span<float> to_v8 is Float32Array", v8_val->IsFloat32Array());
+		auto view = v8_val.As<v8::Float32Array>();
+		check_eq("span<float> length", static_cast<size_t>(view->Length()), data.size());
+	}
+
+	// span<double> -> Float64Array
+	{
+		std::vector<double> data{1.0, 2.0};
+		std::span<double> sp(data);
+		auto v8_val = v8pp::to_v8(isolate, sp);
+		check("span<double> to_v8 is Float64Array", v8_val->IsFloat64Array());
+	}
+
+	// Empty span
+	{
+		std::span<uint8_t> empty;
+		auto v8_val = v8pp::to_v8(isolate, empty);
+		check("empty span to_v8 is Uint8Array", v8_val->IsUint8Array());
+		auto view = v8_val.As<v8::Uint8Array>();
+		check_eq("empty span length", static_cast<size_t>(view->Length()), size_t{0});
+	}
+
+	// span data is copied (modifying original doesn't affect JS)
+	{
+		std::vector<int32_t> data{10, 20, 30};
+		std::span<int32_t> sp(data);
+		auto v8_val = v8pp::to_v8(isolate, sp);
+		data[0] = 999; // modify original
+		auto view = v8_val.As<v8::Int32Array>();
+		auto buffer = view->Buffer();
+		auto* buf_data = static_cast<int32_t*>(buffer->GetBackingStore()->Data());
+		check_eq("span copy semantics", buf_data[0], 10); // should still be 10
+	}
+}
+
 void test_convert()
 {
 	v8pp::context context;
@@ -741,4 +1045,11 @@ void test_convert()
 	test_convert_variant(isolate);
 	test_convert_crash_safety(isolate);
 	test_convert_try_from_v8(isolate);
+	test_convert_bigint(isolate);
+	test_convert_set(isolate);
+	test_convert_pair(isolate);
+	test_convert_path(isolate);
+	test_convert_chrono(isolate);
+	test_convert_arraybuffer(isolate);
+	test_convert_span(isolate);
 }
