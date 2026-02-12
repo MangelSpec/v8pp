@@ -18,3 +18,5 @@ out/
 /build*/
 .vscode/
 CMakeSettings.json
+.claude/
+third_party/

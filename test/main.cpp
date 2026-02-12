@@ -16,6 +16,7 @@ void run_tests()
 	void test_type_info();
 	void test_utility();
 	void test_context();
+	void test_context_store();
 	void test_convert();
 	void test_throw_ex();
 	void test_call_v8();
@@ -27,12 +28,20 @@ void run_tests()
 	void test_property();
 	void test_object();
 	void test_json();
+	void test_overload();
+	void test_fast_api();
+	void test_symbol();
+	void test_promise();
+	void test_gc_stress();
+	void test_adversarial();
+	void test_thread_safety();
 
 	std::pair<char const*, void (*)()> tests[] =
 	{
 		{ "test_type_info", test_type_info },
 		{"test_utility", test_utility},
 		{"test_context", test_context},
+		{"test_context_store", test_context_store},
 		{"test_convert", test_convert},
 		{"test_throw_ex", test_throw_ex},
 		{"test_function", test_function},
@@ -44,6 +53,13 @@ void run_tests()
 		{"test_property", test_property},
 		{"test_object", test_object},
 		{"test_json", test_json},
+		{"test_overload", test_overload},
+		{"test_fast_api", test_fast_api},
+		{"test_symbol", test_symbol},
+		{"test_promise", test_promise},
+		{"test_gc_stress", test_gc_stress},
+		{"test_adversarial", test_adversarial},
+		{"test_thread_safety", test_thread_safety},
 	};
 
 	for (auto const& test : tests)

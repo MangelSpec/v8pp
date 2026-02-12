@@ -3,6 +3,7 @@
 #include <v8.h>
 
 #include "v8pp/function.hpp"
+#include "v8pp/overload.hpp"
 #include "v8pp/property.hpp"
 
 namespace v8pp {
@@ -44,7 +45,7 @@ public:
 	template<typename Data>
 	module& value(std::string_view name, v8::Local<Data> value)
 	{
-		obj_->Set(v8pp::to_v8(isolate_, name), value);
+		obj_->Set(v8pp::to_v8_name(isolate_, name), value);
 		return *this;
 	}
 
@@ -60,17 +61,49 @@ public:
 	{
 		v8::HandleScope scope(isolate_);
 
-		cl.class_function_template()->SetClassName(v8pp::to_v8(isolate_, name));
+		cl.class_function_template()->SetClassName(v8pp::to_v8_name(isolate_, name));
 		return value(name, cl.js_function_template());
 	}
 
 	/// Set a C++ function in the module with specified name
 	template<typename Function, typename Traits = raw_ptr_traits>
-	module& function(std::string_view name, Function&& func)
+		requires detail::is_callable<std::decay_t<Function>>::value
+	module& function(std::string_view name, Function&& func,
+		v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
+	{
+		return value(name, wrap_function_template<Function, Traits>(isolate_, std::forward<Function>(func), side_effect_type));
+	}
+
+	/// Set a Fast API C++ function in the module with specified name
+	template<auto FuncPtr, typename Traits = raw_ptr_traits>
+	module& function(std::string_view name, fast_function<FuncPtr>,
+		v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
+	{
+		return value(name, wrap_function_template<FuncPtr, Traits>(isolate_,
+			fast_function<FuncPtr>{}, side_effect_type));
+	}
+
+	/// Set a C++ function with default parameter values in the module
+	template<typename Function, typename... Defs, typename Traits = raw_ptr_traits>
+	module& function(std::string_view name, Function&& func, v8pp::defaults<Defs...> defs,
+		v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 	{
 		using Fun = typename std::decay_t<Function>;
 		static_assert(detail::is_callable<Fun>::value, "Function must be callable");
-		return value(name, wrap_function_template<Function, Traits>(isolate_, std::forward<Function>(func)));
+		return value(name, wrap_function_template<Function, Traits>(isolate_,
+			std::forward<Function>(func), std::move(defs), side_effect_type));
+	}
+
+	/// Set multiple overloaded C++ functions in the module with specified name.
+	/// F2 must be callable or an overload_entry (excludes defaults, SideEffectType, etc.)
+	template<typename F1, typename F2, typename... Fs, typename Traits = raw_ptr_traits>
+		requires (detail::is_callable<std::decay_t<F2>>::value
+			|| std::is_member_function_pointer_v<std::decay_t<F2>>
+			|| is_overload_entry<std::decay_t<F2>>::value)
+	module& function(std::string_view name, F1&& f1, F2&& f2, Fs&&... fs)
+	{
+		return value(name, wrap_overload_template<Traits>(isolate_,
+			std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
 	}
 
 	/// Set a C++ variable in the module with specified name
@@ -80,11 +113,21 @@ public:
 		static_assert(!detail::is_callable<Variable>::value, "Variable must not be callable");
 		v8::HandleScope scope(isolate_);
 
-		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate_, name);
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
 		v8::AccessorNameGetterCallback getter = &var_get<Variable>;
 		v8::AccessorNameSetterCallback setter = &var_set<Variable>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate_, &var);
-		obj_->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
+			v8::PropertyAttribute::DontDelete,
+			v8::SideEffectType::kHasNoSideEffect,
+			v8::SideEffectType::kHasSideEffectToReceiver);
+#else
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
+			v8::PropertyAttribute::DontDelete, v8::DEFAULT,
+			v8::SideEffectType::kHasNoSideEffect,
+			v8::SideEffectType::kHasSideEffectToReceiver);
+#endif
 		return *this;
 	}
 
@@ -104,11 +147,23 @@ public:
 
 		v8::HandleScope scope(isolate_);
 
-		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate_, name);
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
 		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
 		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate_, property_type(std::move(get), std::move(set)));
-		obj_->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
+
+		v8::SideEffectType setter_effect = property_type::is_readonly
+			? v8::SideEffectType::kHasSideEffect
+			: v8::SideEffectType::kHasSideEffectToReceiver;
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
+			v8::PropertyAttribute::DontDelete,
+			v8::SideEffectType::kHasNoSideEffect, setter_effect);
+#else
+		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
+			v8::PropertyAttribute::DontDelete, v8::DEFAULT,
+			v8::SideEffectType::kHasNoSideEffect, setter_effect);
+#endif
 		return *this;
 	}
 
@@ -117,7 +172,7 @@ public:
 	{
 		v8::HandleScope scope(isolate_);
 
-		obj_->Set(v8pp::to_v8(isolate_, name), m.obj_,
+		obj_->Set(v8pp::to_v8_name(isolate_, name), m.obj_,
 			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
 		return *this;
 	}
@@ -128,7 +183,7 @@ public:
 	{
 		v8::HandleScope scope(isolate_);
 
-		obj_->Set(v8pp::to_v8(isolate_, name), to_v8(isolate_, value),
+		obj_->Set(v8pp::to_v8_name(isolate_, name), to_v8(isolate_, value),
 			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
 		return *this;
 	}

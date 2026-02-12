@@ -2,7 +2,32 @@
 
 include(GNUInstallDirs)
 
-if(DEFINED VCPKG_TARGET_TRIPLET)
+if(TARGET V8::V8)
+	message(STATUS "Using existing V8::V8 target")
+elseif(DEFINED CUSTOM_V8_LIB_PATH)
+	add_library(CustomV8 INTERFACE)
+	add_library(V8::V8 ALIAS CustomV8)
+	if(DEFINED CUSTOM_V8_INCLUDE_PATH)
+		target_include_directories(CustomV8 INTERFACE
+			$<BUILD_INTERFACE:${CUSTOM_V8_INCLUDE_PATH}>
+		)
+	endif()
+	get_filename_component(_v8_ext "${CUSTOM_V8_LIB_PATH}" EXT)
+	if("${_v8_ext}" STREQUAL ".a" OR "${_v8_ext}" STREQUAL ".so" OR "${_v8_ext}" STREQUAL ".lib" OR "${_v8_ext}" STREQUAL ".dylib")
+		target_link_libraries(CustomV8 INTERFACE "${CUSTOM_V8_LIB_PATH}")
+	else()
+		# directory containing individual V8 static libs
+		target_link_libraries(CustomV8 INTERFACE
+			"${CUSTOM_V8_LIB_PATH}/libv8_libbase.a"
+			"${CUSTOM_V8_LIB_PATH}/libv8_libplatform.a"
+			"${CUSTOM_V8_LIB_PATH}/libv8_monolith.a"
+		)
+	endif()
+	if(WIN32)
+		target_link_libraries(CustomV8 INTERFACE winmm dbghelp)
+	endif()
+	message(STATUS "Using custom V8 from ${CUSTOM_V8_LIB_PATH}")
+elseif(DEFINED VCPKG_TARGET_TRIPLET)
 	find_package(V8 CONFIG REQUIRED)
 else()
 	list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -25,11 +50,14 @@ set(V8PP_HEADERS
 	call_v8.hpp
 	class.hpp
 	context.hpp
+	context_store.hpp
 	convert.hpp
 	function.hpp
 	json.hpp
 	module.hpp
 	object.hpp
+	overload.hpp
+	promise.hpp
 	property.hpp
 	ptr_traits.hpp
 	throw_ex.hpp
@@ -41,6 +69,7 @@ set(V8PP_HEADERS
 if(V8PP_HEADER_ONLY)
 	list(APPEND V8PP_HEADERS
 		class.ipp
+		context_store.ipp
 		json.ipp
 		throw_ex.ipp
 		version.ipp
@@ -50,6 +79,7 @@ else()
 	set(V8PP_SOURCES
 		class.cpp
 		context.cpp
+		context_store.cpp
 		convert.cpp
 		json.cpp
 		throw_ex.cpp
@@ -57,13 +87,12 @@ else()
 	)
 endif()
 
-#set(CMAKE_CXX_RTTI OFF)
 if(MSVC)
 	set(V8PP_COMPILE_OPTIONS /GR- /EHsc /permissive- /W4)
 	# disable specific warnings
 	list(APPEND V8PP_COMPILE_OPTIONS /wd4190)
 	# set warning level 3 for system headers
-	list(APPEND V8PP_COMPILE_OPTIONS /experimental:external /external:anglebrackets /external:W3)
+	list(APPEND V8PP_COMPILE_OPTIONS /external:anglebrackets /external:W3)
 else()
 	set(V8PP_COMPILE_OPTIONS -frtti -fexceptions -Wall -Wextra -Wpedantic)
 endif()
@@ -91,12 +120,6 @@ else()
 	endif()
 endif()
 
-if(V8PP_PRETTIFY_TYPENAMES)
-	target_compile_definitions(v8pp PRIVATE V8PP_PRETTIFY_TYPENAMES=1)
-endif()
-
-#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${V8PP_HEADERS} ${V8PP_SOURCES})
-
 # Install
 include(CMakePackageConfigHelpers)
 
@@ -106,6 +129,9 @@ write_basic_package_version_file("${PROJECT_BINARY_DIR}/ConfigVersion.cmake" COM
 configure_package_config_file("${PROJECT_SOURCE_DIR}/cmake/Config.cmake.in" "${PROJECT_BINARY_DIR}/Config.cmake"
 	INSTALL_DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/v8pp/cmake)
 
+if(TARGET CustomV8)
+	install(TARGETS CustomV8 EXPORT ${targets_export_name})
+endif()
 install(TARGETS v8pp EXPORT ${targets_export_name})
 install(EXPORT ${targets_export_name}
 	NAMESPACE v8pp::

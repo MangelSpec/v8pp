@@ -52,6 +52,11 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 		[](v8::FunctionCallbackInfo<v8::Value> const& args)
 		{
 			v8::Isolate* isolate = args.GetIsolate();
+			if (!args.IsConstructCall())
+			{
+				args.GetReturnValue().Set(throw_ex(isolate, "must be called with new"));
+				return;
+			}
 			object_registry* this_ = external_data::get<object_registry*>(args.Data());
 			try
 			{
@@ -217,8 +222,11 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 	pobj.SetWeak(this, [](v8::WeakCallbackInfo<object_registry> const& data)
 		{
 			object_id object = data.GetInternalField(0);
-			object_registry* this_ = static_cast<object_registry*>(data.GetInternalField(1));
-			this_->remove_object(object);
+			auto this_ = static_cast<object_registry*>(data.GetInternalField(1));
+			if (this_ && this_->is_valid())
+			{
+				this_->remove_object(object);
+			}
 		}, v8::WeakCallbackType::kInternalFields);
 	objects_.emplace(object, wrapped_object{ std::move(pobj), size });
 	apply_const_properties(isolate_, obj, object);
@@ -261,8 +269,11 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 		pobj.SetWeak(this, [](v8::WeakCallbackInfo<object_registry> const& data)
 			{
 				object_id object = data.GetInternalField(0);
-				object_registry* this_ = static_cast<object_registry*>(data.GetInternalField(1));
-				this_->remove_object(object);
+				auto this_ = static_cast<object_registry*>(data.GetInternalField(1));
+				if (this_ && this_->is_valid())
+				{
+					this_->remove_object(object);
+				}
 			}, v8::WeakCallbackType::kInternalFields);
 		objects_.emplace(object, wrapped_object{ std::move(pobj), size });
 		apply_const_properties(isolate_, obj, object);
@@ -294,9 +305,46 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 {
 	v8::HandleScope scope(isolate_);
 
-	while (value->IsObject())
+	if (!value->IsObject())
 	{
-		v8::Local<v8::Object> obj = value.As<v8::Object>();
+		return nullptr;
+	}
+
+	v8::Local<v8::Object> obj = value.As<v8::Object>();
+
+	// Fast path: check the object itself (most common case)
+	if (obj->InternalFieldCount() == 2)
+	{
+		object_id id = obj->GetAlignedPointerFromInternalField(0);
+		if (id)
+		{
+			auto registry = static_cast<object_registry*>(
+				obj->GetAlignedPointerFromInternalField(1));
+			if (registry && registry->is_valid())
+			{
+				pointer_type ptr = registry->find_object(id, type);
+				if (ptr)
+				{
+					return ptr;
+				}
+			}
+		}
+	}
+
+	// Slow path: walk prototype chain with depth limit (for inheritance)
+	constexpr int kMaxPrototypeDepth = 16;
+	for (int depth = 0; depth < kMaxPrototypeDepth; ++depth)
+	{
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		value = obj->GetPrototypeV2();
+#else
+		value = obj->GetPrototype();
+#endif
+		if (!value->IsObject())
+		{
+			break;
+		}
+		obj = value.As<v8::Object>();
 		if (obj->InternalFieldCount() == 2)
 		{
 			object_id id = obj->GetAlignedPointerFromInternalField(0);
@@ -304,7 +352,7 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 			{
 				auto registry = static_cast<object_registry*>(
 					obj->GetAlignedPointerFromInternalField(1));
-				if (registry)
+				if (registry && registry->is_valid())
 				{
 					pointer_type ptr = registry->find_object(id, type);
 					if (ptr)
@@ -314,11 +362,6 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 				}
 			}
 		}
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
-		value = obj->GetPrototypeV2();
-#else
-		value = obj->GetPrototype();
-#endif
 	}
 	return nullptr;
 }

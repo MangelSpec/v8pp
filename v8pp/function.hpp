@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include "v8pp/call_from_v8.hpp"
+#include "v8pp/fast_api.hpp"
 #include "v8pp/ptr_traits.hpp"
 #include "v8pp/throw_ex.hpp"
 #include "v8pp/utility.hpp"
@@ -131,6 +132,14 @@ private:
 	};
 };
 
+/// Bundles a callable F with its default parameter values
+template<typename F, typename Defaults>
+struct function_with_defaults
+{
+	F func;
+	Defaults defs;
+};
+
 template<typename Traits, typename F, typename FTraits>
 decltype(auto) invoke(v8::FunctionCallbackInfo<v8::Value> const& args)
 {
@@ -178,33 +187,195 @@ void forward_function(v8::FunctionCallbackInfo<v8::Value> const& args)
 	}
 }
 
+/// V8 callback adapter for functions with default parameter values
+template<typename Traits, typename F, typename Defaults>
+void forward_function_with_defaults(v8::FunctionCallbackInfo<v8::Value> const& args)
+{
+	using FTraits = function_traits<F>;
+	using Bundle = function_with_defaults<F, Defaults>;
+
+	static_assert(is_callable<F>::value || std::is_member_function_pointer_v<F>, "required callable F");
+
+	v8::Isolate* isolate = args.GetIsolate();
+	v8::HandleScope scope(isolate);
+	try
+	{
+		auto& bundle = external_data::get<Bundle>(args.Data());
+
+		if constexpr (std::is_member_function_pointer<F>())
+		{
+			using class_type = std::decay_t<typename FTraits::class_type>;
+			auto obj = class_<class_type, Traits>::unwrap_object(isolate, args.This());
+			if (!obj)
+			{
+				throw std::runtime_error("method called on null instance");
+			}
+			if constexpr (std::same_as<typename FTraits::return_type, void>)
+			{
+				call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs, *obj);
+			}
+			else
+			{
+				using return_type = typename FTraits::return_type;
+				using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
+				args.GetReturnValue().Set(converter::to_v8(isolate,
+					call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs, *obj)));
+			}
+		}
+		else
+		{
+			if constexpr (std::same_as<typename FTraits::return_type, void>)
+			{
+				call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs);
+			}
+			else
+			{
+				using return_type = typename FTraits::return_type;
+				using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
+				args.GetReturnValue().Set(converter::to_v8(isolate,
+					call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs)));
+			}
+		}
+	}
+	catch (std::exception const& ex)
+	{
+		args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+	}
+}
+
 } // namespace v8pp::detail
 
 namespace v8pp {
 
 /// Wrap C++ function into new V8 function template
 template<typename F, typename Traits = raw_ptr_traits>
-v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate, F&& func)
+v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate, F&& func,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 {
 	using F_type = typename std::decay_t<F>;
 	return v8::FunctionTemplate::New(isolate,
 		&detail::forward_function<Traits, F_type>,
-		detail::external_data::set(isolate, std::forward<F_type>(func)));
+		detail::external_data::set(isolate, std::forward<F_type>(func)),
+		v8::Local<v8::Signature>(), 0,
+		v8::ConstructorBehavior::kAllow,
+		side_effect_type);
+}
+
+/// Wrap C++ function with default parameter values into new V8 function template
+template<typename F, typename Traits = raw_ptr_traits, typename... Defs>
+v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate, F&& func,
+	v8pp::defaults<Defs...> defs,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
+{
+	using F_type = typename std::decay_t<F>;
+	using Defaults = v8pp::defaults<Defs...>;
+	using Bundle = detail::function_with_defaults<F_type, Defaults>;
+	return v8::FunctionTemplate::New(isolate,
+		&detail::forward_function_with_defaults<Traits, F_type, Defaults>,
+		detail::external_data::set(isolate, Bundle{std::forward<F_type>(func), std::move(defs)}),
+		v8::Local<v8::Signature>(), 0,
+		v8::ConstructorBehavior::kAllow,
+		side_effect_type);
+}
+
+/// Wrap C++ function with default parameter values into new V8 function
+template<typename F, typename Traits = raw_ptr_traits, typename... Defs>
+v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view name, F&& func,
+	v8pp::defaults<Defs...> defs,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
+{
+	using F_type = typename std::decay_t<F>;
+	using Defaults = v8pp::defaults<Defs...>;
+	using Bundle = detail::function_with_defaults<F_type, Defaults>;
+	v8::Local<v8::Function> fn;
+	if (!v8::Function::New(isolate->GetCurrentContext(),
+		&detail::forward_function_with_defaults<Traits, F_type, Defaults>,
+		detail::external_data::set(isolate, Bundle{std::forward<F_type>(func), std::move(defs)}),
+		0, v8::ConstructorBehavior::kAllow,
+		side_effect_type).ToLocal(&fn))
+	{
+		return {};
+	}
+	if (!name.empty())
+	{
+		fn->SetName(to_v8_name(isolate, name));
+	}
+	return fn;
 }
 
 /// Wrap C++ function into new V8 function
 /// Set nullptr or empty string for name
 /// to make the function anonymous
 template<typename F, typename Traits = raw_ptr_traits>
-v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view name, F&& func)
+v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view name, F&& func,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 {
 	using F_type = typename std::decay_t<F>;
-	v8::Local<v8::Function> fn = v8::Function::New(isolate->GetCurrentContext(),
+	v8::Local<v8::Function> fn;
+	if (!v8::Function::New(isolate->GetCurrentContext(),
 		&detail::forward_function<Traits, F_type>,
-		detail::external_data::set(isolate, std::forward<F_type>(func))).ToLocalChecked();
+		detail::external_data::set(isolate, std::forward<F_type>(func)),
+		0, v8::ConstructorBehavior::kAllow,
+		side_effect_type).ToLocal(&fn))
+	{
+		return {};
+	}
 	if (!name.empty())
 	{
-		fn->SetName(to_v8(isolate, name));
+		fn->SetName(to_v8_name(isolate, name));
+	}
+	return fn;
+}
+
+/// Wrap a fast_function into a V8 function template with optional Fast API callback.
+/// Compatible signatures get a CFunction for the V8 JIT fast path.
+/// Incompatible signatures or V8 < 10 silently fall back to slow-only.
+template<auto FuncPtr, typename Traits = raw_ptr_traits>
+v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate,
+	fast_function<FuncPtr>,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
+{
+	using F_type = typename fast_function<FuncPtr>::func_type;
+#ifdef V8PP_HAS_FAST_API_HEADER
+	if constexpr (fast_function<FuncPtr>::compatible)
+	{
+		auto c_func = v8::CFunction::Make(&detail::fast_callback<FuncPtr>::call);
+		return v8::FunctionTemplate::New(isolate,
+			&detail::forward_function<Traits, F_type>,
+			detail::external_data::set(isolate, FuncPtr),
+			v8::Local<v8::Signature>(), 0,
+			v8::ConstructorBehavior::kThrow,
+			side_effect_type,
+			&c_func);
+	}
+	else
+#endif
+	{
+		return v8::FunctionTemplate::New(isolate,
+			&detail::forward_function<Traits, F_type>,
+			detail::external_data::set(isolate, FuncPtr),
+			v8::Local<v8::Signature>(), 0,
+			v8::ConstructorBehavior::kAllow,
+			side_effect_type);
+	}
+}
+
+/// Wrap a fast_function into a V8 function (for context global bindings)
+template<auto FuncPtr, typename Traits = raw_ptr_traits>
+v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view name,
+	fast_function<FuncPtr>,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
+{
+	auto tmpl = wrap_function_template<FuncPtr, Traits>(isolate,
+		fast_function<FuncPtr>{}, side_effect_type);
+	v8::Local<v8::Function> fn;
+	if (!tmpl->GetFunction(isolate->GetCurrentContext()).ToLocal(&fn))
+	{
+		return {};
+	}
+	if (!name.empty())
+	{
+		fn->SetName(to_v8_name(isolate, name));
 	}
 	return fn;
 }

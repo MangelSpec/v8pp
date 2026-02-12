@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.12)
 
+# CMP0091: use CMAKE_MSVC_RUNTIME_LIBRARY instead of compiler flags
+if(POLICY CMP0091)
+	cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(v8pp
-	VERSION 2.1.1
+	VERSION 3.0.0
 	DESCRIPTION "Bind C++ functions and classes into V8 JavaScript engine"
 	HOMEPAGE_URL https://github.com/pmed/v8pp
 	LANGUAGES CXX
@@ -13,20 +18,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (MSVC)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zc:__cplusplus") # enable correct __cplusplus macro
+	# static CRT when using a custom V8 monolith built with /MT
+	if(DEFINED CUSTOM_V8_LIB_PATH)
+		set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+	endif()
 endif()
 
 option(BUILD_SHARED_LIBS "Build shared library" ON)
 option(BUILD_TESTING "Build and run tests" OFF)
 option(BUILD_DOCUMENTATION "Build documentation" OFF)
+option(BUILD_BENCHMARKS "Build benchmarks" OFF)
 
 # Custom project options
-set(V8PP_HEADER_ONLY 0 CACHE BOOL "Header-only library")
+option(V8PP_HEADER_ONLY "Header-only library" OFF)
 set(V8PP_ISOLATE_DATA_SLOT 0 CACHE STRING "v8::Isolate data slot number, used in v8pp for shared data")
 set(V8PP_PLUGIN_INIT_PROC_NAME "v8pp_module_init" CACHE STRING "v8pp plugin initialization procedure name")
 set(V8PP_PLUGIN_SUFFIX ${CMAKE_SHARED_MODULE_SUFFIX} CACHE STRING "v8pp plugin filename suffix")
-set(V8PP_PRETTIFY_TYPENAMES 1 CACHE BOOL "v8pp registered classes will have prettier typeid names")
-set(V8_COMPRESS_POINTERS 1 CACHE BOOL "Use new V8 ABI with V8_COMPRESS_POINTERS and V8_31BIT_SMIS_ON_64BIT_ARCH")
-set(V8_ENABLE_SANDBOX 0 CACHE BOOL "Enable sandoxing in V8")
+option(V8PP_PRETTIFY_TYPENAMES "v8pp registered classes will have prettier typeid names" ON)
+option(V8_COMPRESS_POINTERS "Use new V8 ABI with V8_COMPRESS_POINTERS and V8_31BIT_SMIS_ON_64BIT_ARCH" ON)
+option(V8_ENABLE_SANDBOX "Enable sandboxing in V8" OFF)
 
 if(BUILD_SHARED_LIBS AND WIN32)
 	set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true)
@@ -41,6 +51,10 @@ if(BUILD_TESTING)
 	enable_testing()
 	add_subdirectory(plugins)
 	add_subdirectory(test)
+endif()
+
+if(BUILD_BENCHMARKS)
+	add_subdirectory(bench)
 endif()
 
 if(BUILD_DOCUMENTATION)

@@ -1,8 +1,18 @@
 name: CMake
-on: [ push, pull_request ]
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
 jobs:
   build:
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
         build_type: [ Release ]
@@ -24,7 +34,7 @@ jobs:
     name: '${{matrix.os}} ${{matrix.build_type}} shared_lib=${{matrix.shared_lib}} header_only=${{matrix.header_only}} v8_compress_pointers=${{matrix.v8_compress_pointers}} v8_enable_sandbox=${{matrix.v8_enable_sandbox}}'
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Install V8 apt 
       if: startsWith(matrix.os, 'ubuntu')
@@ -34,11 +44,20 @@ jobs:
       if: startsWith(matrix.os, 'macos')
       run: brew install v8
 
+    - name: Cache NuGet packages
+      if: startsWith(matrix.os, 'windows')
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{github.workspace}}/build/v8-v143-x64*
+          ${{github.workspace}}/build/v8.redist-v143-x64*
+        key: nuget-v8-v143-x64-${{runner.os}}-v2
+
     - name: Install V8 nuget
       if: startsWith(matrix.os, 'windows')
       run: nuget install v8-v143-x64 -OutputDirectory ${{github.workspace}}/build
 
-    - name: Install Visual C++ 
+    - name: Install Visual C++
       if: startsWith(matrix.os, 'windows')
       uses: ilammy/msvc-dev-cmd@v1
       with:
@@ -46,7 +65,7 @@ jobs:
         vsversion: 2022
 
     - name: Install ninja-build tool
-      uses: seanmiddleditch/gha-setup-ninja@v3
+      uses: seanmiddleditch/gha-setup-ninja@v5
 
     - name: Configure CMake
       run: cmake -G Ninja -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{matrix.build_type}} -DBUILD_TESTING=TRUE -DBUILD_SHARED_LIBS=${{matrix.shared_lib}} -DV8PP_HEADER_ONLY=${{matrix.header_only}} -DV8_COMPRESS_POINTERS=${{matrix.v8_compress_pointers}} -DV8_ENABLE_SANDBOX=${{matrix.v8_enable_sandbox}}
@@ -54,6 +73,28 @@ jobs:
     - name: Build
       run: cmake --build ${{github.workspace}}/build --config ${{matrix.build_type}}
 
+    - name: Debug DLL layout
+      if: startsWith(matrix.os, 'windows')
+      working-directory: ${{github.workspace}}/build
+      shell: cmd
+      run: |
+        echo === EXE location ===
+        dir /b *.exe 2>nul
+        echo === DLLs in build dir ===
+        dir /b *.dll 2>nul
+        echo === V8 DLL check ===
+        where /r . v8.dll 2>nul
+        echo === Test exe dependencies ===
+        dumpbin /dependents v8pp_test.exe 2>nul | findstr /i ".dll"
+
     - name: Test
       working-directory: ${{github.workspace}}/build
       run: ctest -C ${{matrix.build_type}} -V
+
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs-${{matrix.os}}-shared${{matrix.shared_lib}}-ho${{matrix.header_only}}
+        path: ${{github.workspace}}/build/Testing/
+        retention-days: 7

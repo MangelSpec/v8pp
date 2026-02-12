@@ -36,13 +36,17 @@
 v8::Local<v8::Value> V8PP_PLUGIN_INIT_PROC_NAME(isolate)
 
 #ifndef V8PP_HEADER_ONLY
-#define V8PP_HEADER_ONLY @V8PP_HEADER_ONLY@
+#cmakedefine01 V8PP_HEADER_ONLY
 #endif
 
 #if V8PP_HEADER_ONLY
 #define V8PP_IMPL inline
 #else
 #define V8PP_IMPL
+#endif
+
+#ifndef V8PP_PRETTIFY_TYPENAMES
+#cmakedefine01 V8PP_PRETTIFY_TYPENAMES
 #endif
 
 #define V8PP_STRINGIZE(s)  V8PP_STRINGIZE0(s)

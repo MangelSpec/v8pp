@@ -7,6 +7,7 @@
 
 #include "v8pp/convert.hpp"
 #include "v8pp/function.hpp"
+#include "v8pp/overload.hpp"
 
 namespace v8pp {
 
@@ -84,11 +85,38 @@ public:
 
 	/// Set functions to the context global object
 	template<typename Function, typename Traits = raw_ptr_traits>
+		requires detail::is_callable<std::decay_t<Function>>::value
 	context& function(std::string_view name, Function&& func)
+	{
+		return value(name, wrap_function<Function, Traits>(isolate_, name, std::forward<Function>(func)));
+	}
+
+	/// Set a Fast API function to the context global object
+	template<auto FuncPtr, typename Traits = raw_ptr_traits>
+	context& function(std::string_view name, fast_function<FuncPtr>)
+	{
+		return value(name, wrap_function<FuncPtr, Traits>(isolate_, name, fast_function<FuncPtr>{}));
+	}
+
+	/// Set functions with default parameter values to the context global object
+	template<typename Function, typename... Defs, typename Traits = raw_ptr_traits>
+	context& function(std::string_view name, Function&& func, v8pp::defaults<Defs...> defs)
 	{
 		using Fun = typename std::decay_t<Function>;
 		static_assert(detail::is_callable<Fun>::value, "Function must be callable");
-		return value(name, wrap_function<Function, Traits>(isolate_, name, std::forward<Function>(func)));
+		return value(name, wrap_function<Function, Traits>(isolate_, name,
+			std::forward<Function>(func), std::move(defs)));
+	}
+
+	/// Set multiple overloaded functions to the context global object
+	template<typename F1, typename F2, typename... Fs, typename Traits = raw_ptr_traits>
+		requires (detail::is_callable<std::decay_t<F2>>::value
+			|| std::is_member_function_pointer_v<std::decay_t<F2>>
+			|| is_overload_entry<std::decay_t<F2>>::value)
+	context& function(std::string_view name, F1&& f1, F2&& f2, Fs&&... fs)
+	{
+		return value(name, wrap_overload(isolate_, name,
+			std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
 	}
 
 	/// Set class to the context global object
@@ -96,7 +124,7 @@ public:
 	context& class_(std::string_view name, v8pp::class_<T, Traits>& cl)
 	{
 		v8::HandleScope scope(isolate_);
-		cl.class_function_template()->SetClassName(v8pp::to_v8(isolate_, name));
+		cl.class_function_template()->SetClassName(v8pp::to_v8_name(isolate_, name));
 		return value(name, cl.js_function_template()->GetFunction(isolate_->GetCurrentContext()).ToLocalChecked());
 	}
 

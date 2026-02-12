@@ -8,6 +8,31 @@
 
 namespace v8pp {
 
+/// Traverse dot-separated subobject path, updating options and name
+/// to point to the final object and leaf property name.
+/// Returns false if any intermediate path segment is missing or not an object.
+inline bool traverse_subobjects(v8::Isolate* isolate, v8::Local<v8::Context> context,
+	v8::Local<v8::Object>& options, std::string_view& name)
+{
+	for (;;)
+	{
+		std::string_view::size_type const dot_pos = name.find('.');
+		if (dot_pos == name.npos)
+		{
+			return true;
+		}
+
+		v8::Local<v8::Value> part;
+		if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
+			|| !part->IsObject())
+		{
+			return false;
+		}
+		options = part.As<v8::Object>();
+		name.remove_prefix(dot_pos + 1);
+	}
+}
+
 /// Get optional value from V8 object by name.
 /// Dot symbols in option name delimits subobjects name.
 /// return false if the value doesn't exist in the options object
@@ -17,25 +42,9 @@ bool get_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
 {
 	v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-	if (support_subobjects)
+	if (support_subobjects && !traverse_subobjects(isolate, context, options, name))
 	{
-		for (;;)
-		{
-			std::string_view::size_type const dot_pos = name.find('.');
-			if (dot_pos == name.npos)
-			{
-				break;
-			}
-
-			v8::Local<v8::Value> part;
-			if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
-				|| !part->IsObject())
-			{
-				return false;
-			}
-			options = part.As<v8::Object>();
-			name.remove_prefix(dot_pos + 1);
-		}
+		return false;
 	}
 
 	v8::Local<v8::Value> val;
@@ -64,25 +73,9 @@ bool set_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
 {
 	v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-	if (support_subobjects)
+	if (support_subobjects && !traverse_subobjects(isolate, context, options, name))
 	{
-		for (;;)
-		{
-			std::string_view::size_type const dot_pos = name.find('.');
-			if (dot_pos == name.npos)
-			{
-				break;
-			}
-
-			v8::Local<v8::Value> part;
-			if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
-				|| !part->IsObject())
-			{
-				return false;
-			}
-			options = part.As<v8::Object>();
-			name.remove_prefix(dot_pos + 1);
-		}
+		return false;
 	}
 
 	return options->Set(context, v8pp::to_v8(isolate, name), to_v8(isolate, value)).FromMaybe(false);
@@ -103,25 +96,9 @@ bool set_option_data(v8::Isolate* isolate, v8::Local<v8::Object> options,
 {
 	v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-	if (support_subobjects)
+	if (support_subobjects && !traverse_subobjects(isolate, context, options, name))
 	{
-		for (;;)
-		{
-			std::string_view::size_type const dot_pos = name.find('.');
-			if (dot_pos == name.npos)
-			{
-				break;
-			}
-
-			v8::Local<v8::Value> part;
-			if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
-				|| !part->IsObject())
-			{
-				return false;
-			}
-			options = part.As<v8::Object>();
-			name.remove_prefix(dot_pos + 1);
-		}
+		return false;
 	}
 
 	return options->CreateDataProperty(context,

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <concepts>
 #include <functional>
 #include <memory>
@@ -70,55 +71,46 @@ struct is_string<wchar_t const*> : std::true_type
 //
 // is_mapping<T>
 //
-template<typename T, typename U = void>
-struct is_mapping_impl : std::false_type
-{
+template<typename T>
+concept mapping = requires(T t) {
+	typename T::key_type;
+	typename T::mapped_type;
+	t.begin();
+	t.end();
 };
 
 template<typename T>
-struct is_mapping_impl<T, std::void_t<typename T::key_type, typename T::mapped_type,
-	decltype(std::declval<T>().begin()), decltype(std::declval<T>().end())>> : std::true_type
+struct is_mapping : std::bool_constant<mapping<T>>
 {
 };
-
-template<typename T>
-using is_mapping = is_mapping_impl<T>;
 
 /////////////////////////////////////////////////////////////////////////////
 //
 // is_sequence<T>
 //
-template<typename T, typename U = void>
-struct is_sequence_impl : std::false_type
-{
+template<typename T>
+concept sequence = !is_string<T>::value && requires(T t, typename T::value_type v) {
+	t.begin();
+	t.end();
+	t.emplace_back(std::move(v));
 };
 
 template<typename T>
-struct is_sequence_impl<T, std::void_t<typename T::value_type,
-	decltype(std::declval<T>().begin()), decltype(std::declval<T>().end()),
-	decltype(std::declval<T>().emplace_back(std::declval<typename T::value_type>()))>> : std::negation<is_string<T>>
+struct is_sequence : std::bool_constant<sequence<T>>
 {
 };
-
-template<typename T>
-using is_sequence = is_sequence_impl<T>;
 
 /////////////////////////////////////////////////////////////////////////////
 //
 // has_reserve<T>
 //
-template<typename T, typename U = void>
-struct has_reserve_impl : std::false_type
-{
-};
+template<typename T>
+concept reservable = requires(T t) { t.reserve(size_t{}); };
 
 template<typename T>
-struct has_reserve_impl<T, std::void_t<decltype(std::declval<T>().reserve(0))>> : std::true_type
+struct has_reserve : std::bool_constant<reservable<T>>
 {
 };
-
-template<typename T>
-using has_reserve = has_reserve_impl<T>;
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -134,6 +126,75 @@ struct is_array<std::array<T, N>> : std::true_type
 {
 	static constexpr size_t length = N;
 };
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_set<T> — set-like containers (insert but not emplace_back)
+//
+template<typename T>
+concept set_like = !is_string<T>::value && !mapping<T> && !sequence<T>
+	&& requires(T t, typename T::value_type v) {
+		t.begin();
+		t.end();
+		t.insert(std::move(v));
+	};
+
+template<typename T>
+struct is_set : std::bool_constant<set_like<T>>
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_pair<T>
+//
+template<typename T>
+struct is_pair : std::false_type
+{
+};
+
+template<typename K, typename V>
+struct is_pair<std::pair<K, V>> : std::true_type
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_duration<T>
+//
+template<typename T>
+struct is_duration : std::false_type
+{
+};
+
+template<typename Rep, typename Period>
+struct is_duration<std::chrono::duration<Rep, Period>> : std::true_type
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// is_time_point<T>
+//
+template<typename T>
+struct is_time_point : std::false_type
+{
+};
+
+template<typename Clock, typename Duration>
+struct is_time_point<std::chrono::time_point<Clock, Duration>> : std::true_type
+{
+};
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// typed_array_trait<T> — maps C++ types to V8 TypedArray types
+//
+template<typename T>
+struct typed_array_trait;
+
+template<typename T>
+concept typed_array_element = requires { typename typed_array_trait<T>::type; };
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -316,36 +377,19 @@ struct function_traits<F&&> : function_traits<F>
 {
 };
 
-template<typename F, bool is_class>
-struct is_callable_impl
-	: std::is_function<typename std::remove_pointer<F>::type>
-{
-};
+template<typename F>
+concept callable = std::is_function_v<std::remove_pointer_t<F>>
+	|| requires { &F::operator(); };
 
 template<typename F>
-struct is_callable_impl<F, true>
-{
-private:
-	struct fallback { void operator()(); };
-	struct derived : F, fallback {};
-
-	template<typename U, U>
-	struct check;
-
-	template<typename>
-	static std::true_type test(...);
-
-	template<typename C>
-	static std::false_type test(check<void (fallback::*)(), &C::operator()>*);
-
-	using type = decltype(test<derived>(0));
-
-public:
-	static constexpr bool value = type::value;
-};
+using is_callable = std::bool_constant<callable<F>>;
 
 template<typename F>
-using is_callable = std::integral_constant<bool,
-	is_callable_impl<F, std::is_class<F>::value>::value>;
+inline constexpr bool is_const_member_function_v = false;
+
+template<typename F>
+	requires std::is_member_function_pointer_v<F>
+inline constexpr bool is_const_member_function_v<F> =
+	std::is_const_v<typename function_traits<F>::class_type>;
 
 } // namespace v8pp::detail

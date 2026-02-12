@@ -230,11 +230,17 @@ void test_class_()
 	check_eq("C++ exception from X ctor",
 		run_script<std::string>(context, "ret = ''; try { new X(1, 2); } catch(err) { ret = err.message; } ret"),
 		"C++ exception");
-	check("Unhandled C++ exception from X ctor", context.run_script("x = new X(1, 2); x").IsEmpty());
+	{
+		v8::TryCatch try_catch(context.isolate());
+		check("Unhandled C++ exception from X ctor", context.run_script("x = new X(1, 2); x").IsEmpty());
+	}
 	check_eq("V8 exception from X ctor",
 		run_script<std::string>(context, "ret = ''; try { new X(1, 2, 3); } catch(err) { ret = err.message; } ret"),
 		"JS exception");
-	check("Unhandled V8 exception from X ctor", context.run_script("x = new X(1, 2, 3); x").IsEmpty());
+	{
+		v8::TryCatch try_catch(context.isolate());
+		check("Unhandled V8 exception from X ctor", context.run_script("x = new X(1, 2, 3); x").IsEmpty());
+	}
 
 	check_eq("X object", run_script<int>(context, "x = new X(); x.var += x.konst"), 100);
 	check_eq("X::rprop", run_script<int>(context, "x = new X(); x.rprop"), 1);
@@ -269,14 +275,70 @@ void test_class_()
 		run_script<int>(context, "x = new X(); f = x.fun1; f(1)");
 	});
 
+	// Crash safety: method call on plain object via .call() should throw JS error, not crash
+	check_eq("method call on plain object via .call()",
+		run_script<std::string>(context,
+			"try { x = new X(); x.fun1.call({}, 1); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+
+	// Crash safety: property read on non-wrapped object should throw JS error, not crash
+	check_eq("property read on non-wrapped object",
+		run_script<std::string>(context,
+			"try { var desc = Object.getOwnPropertyDescriptor(new X(), 'rprop');"
+			"desc.get.call({}); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+
+	// Crash safety: property write on non-wrapped object should throw JS error, not crash
+	check_eq("property write on non-wrapped object",
+		run_script<std::string>(context,
+			"try { var desc = Object.getOwnPropertyDescriptor(new X(), 'wprop');"
+			"desc.set.call({}, 42); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+
+	// Crash safety: deep prototype chain beyond depth limit should not hang
+	check_eq("deep prototype chain beyond depth limit",
+		run_script<std::string>(context,
+			"var obj = {};"
+			"for (var i = 0; i < 20; i++) { obj = Object.create(obj); }"
+			"try { var x = new X(); x.fun1.call(obj, 1); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+
+	// Crash safety: normal direct unwrap (fast path) still works
+	check_eq("direct unwrap fast path", run_script<int>(context, "x = new X(3); x.fun1(1)"), 4);
+
+	// Crash safety: inheritance chain unwrap still works
+	check_eq("inheritance unwrap", run_script<int>(context, "y = new Y(5); y.fun1(10)"), 15);
+
 	check_eq("JSON.stringify(X)",
 		run_script<std::string>(context, "JSON.stringify({'obj': new X(10), 'arr': [new X(11), new X(12)] })"),
 		R"({"obj":{"key":"obj","var":10},"arr":[{"key":"0","var":11},{"key":"1","var":12}]})"
 	);
 
+	// Use order-independent comparison since V8 property enumeration order
+	// on prototype templates varies across V8 versions
 	check_eq("JSON.stringify(Y)",
-		run_script<std::string>(context, "JSON.stringify({'obj': new Y(10), 'arr': [new Y(11), new Y(12)] })"),
-		R"({"obj":{"useX":"function useX() { [native code] }","useX_ptr":"function useX_ptr() { [native code] }","toJSON":"function toJSON() { [native code] }","wprop_external3":10,"wprop_external2":10,"wprop_external1":10,"rprop_external3":10,"rprop_external2":10,"rprop_external1":10,"rprop_direct":10,"prop2":10,"prop":10,"wprop2":10,"wprop":10,"rprop":10,"var":10,"konst":99,"fun1":"function fun1() { [native code] }","fun2":"function fun2() { [native code] }","fun3":"function fun3() { [native code] }","fun4":"function fun4() { [native code] }","static_fun":"function static_fun() { [native code] }","static_lambda":"function static_lambda() { [native code] }","extern_fun":"function extern_fun() { [native code] }"},"arr":[{"useX":"function useX() { [native code] }","useX_ptr":"function useX_ptr() { [native code] }","toJSON":"function toJSON() { [native code] }","wprop_external3":11,"wprop_external2":11,"wprop_external1":11,"rprop_external3":11,"rprop_external2":11,"rprop_external1":11,"rprop_direct":11,"prop2":11,"prop":11,"wprop2":11,"wprop":11,"rprop":11,"var":11,"konst":99,"fun1":"function fun1() { [native code] }","fun2":"function fun2() { [native code] }","fun3":"function fun3() { [native code] }","fun4":"function fun4() { [native code] }","static_fun":"function static_fun() { [native code] }","static_lambda":"function static_lambda() { [native code] }","extern_fun":"function extern_fun() { [native code] }"},{"useX":"function useX() { [native code] }","useX_ptr":"function useX_ptr() { [native code] }","toJSON":"function toJSON() { [native code] }","wprop_external3":12,"wprop_external2":12,"wprop_external1":12,"rprop_external3":12,"rprop_external2":12,"rprop_external1":12,"rprop_direct":12,"prop2":12,"prop":12,"wprop2":12,"wprop":12,"rprop":12,"var":12,"konst":99,"fun1":"function fun1() { [native code] }","fun2":"function fun2() { [native code] }","fun3":"function fun3() { [native code] }","fun4":"function fun4() { [native code] }","static_fun":"function static_fun() { [native code] }","static_lambda":"function static_lambda() { [native code] }","extern_fun":"function extern_fun() { [native code] }"}]})"
+		run_script<bool>(context, R"(
+			(function() {
+				var s = JSON.stringify({'obj': new Y(10), 'arr': [new Y(11), new Y(12)]});
+				var r = JSON.parse(s);
+				var props = ['rprop','wprop','wprop2','prop','prop2','rprop_direct',
+					'rprop_external1','rprop_external2','rprop_external3',
+					'wprop_external1','wprop_external2','wprop_external3'];
+				var fns = ['fun1','fun2','fun3','fun4','static_fun','static_lambda',
+					'extern_fun','useX','useX_ptr','toJSON'];
+				function check(o, v) {
+					if (o['var'] !== v || o.konst !== 99) return false;
+					for (var i = 0; i < props.length; i++)
+						if (o[props[i]] !== v) return false;
+					for (var i = 0; i < fns.length; i++)
+						if (typeof o[fns[i]] !== 'string' || o[fns[i]].indexOf('native code') < 0) return false;
+					return Object.keys(o).length === (2 + props.length + fns.length);
+				}
+				return check(r.obj, 10) && check(r.arr[0], 11) && check(r.arr[1], 12)
+					&& r.arr.length === 2;
+			})()
+		)"),
+		true
 	);
 
 	check_eq("Y object", run_script<int>(context, "y = new Y(-100); y.konst + y.var"), -1);
@@ -299,7 +361,7 @@ void test_class_()
 	check_eq("y3.var", y3->var, -3);
 
 	run_script<int>(context, "x = new X; for (i = 0; i < 10; ++i) { y = new Y(i); y.useX(x); y.useX_ptr(x); }");
-	check_eq("Y count", Y::instance_count, 13 + 4); // 13 + y + y1 + y2 + y3
+	check_eq("Y count", Y::instance_count, 14 + 4); // 14 + y + y1 + y2 + y3 (14 includes extra Y from unwrap test)
 	run_script<int>(context, "y = null; 0");
 
 	v8pp::class_<Y, Traits>::unreference_external(isolate, y1);

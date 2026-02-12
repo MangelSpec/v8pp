@@ -7,6 +7,8 @@
 #include "v8pp/throw_ex.hpp"
 
 #include <fstream>
+#include <mutex>
+#include <unordered_set>
 #include <utility>
 
 #if defined(WIN32)
@@ -20,6 +22,18 @@ static char const path_sep = '/';
 #endif
 
 namespace v8pp {
+
+static std::mutex& alive_contexts_mutex()
+{
+	static std::mutex mtx;
+	return mtx;
+}
+
+static std::unordered_set<context*>& alive_contexts()
+{
+	static std::unordered_set<context*> set;
+	return set;
+}
 
 struct context::dynamic_module
 {
@@ -42,6 +56,13 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 		}
 
 		context* ctx = detail::external_data::get<context*>(args.Data());
+		{
+			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+			if (alive_contexts().find(ctx) == alive_contexts().end())
+			{
+				throw std::runtime_error("require() called on destroyed context");
+			}
+		}
 
 		// check if module is already loaded
 		const auto it = ctx->modules_.find(name);
@@ -120,6 +141,13 @@ void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
 		}
 
 		context* ctx = detail::external_data::get<context*>(args.Data());
+		{
+			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+			if (alive_contexts().find(ctx) == alive_contexts().end())
+			{
+				throw std::runtime_error("run() called on destroyed context");
+			}
+		}
 		result = to_v8(isolate, ctx->run_file(filename));
 	}
 	catch (std::exception const& ex)
@@ -129,33 +157,10 @@ void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
 	args.GetReturnValue().Set(scope.Escape(result));
 }
 
-#if V8_MAJOR_VERSION < 5 || (V8_MAJOR_VERSION == 5 && V8_MINOR_VERSION < 4)
-struct array_buffer_allocator : v8::ArrayBuffer::Allocator
-{
-	void* Allocate(size_t length)
-	{
-		return calloc(length, 1);
-	}
-	void* AllocateUninitialized(size_t length)
-	{
-		return malloc(length);
-	}
-	void Free(void* data, size_t length)
-	{
-		free(data);
-		(void)length;
-	}
-};
-#endif
-
 v8::Isolate* context::create_isolate(v8::ArrayBuffer::Allocator* allocator)
 {
 	v8::Isolate::CreateParams create_params;
-#if V8_MAJOR_VERSION < 5 || (V8_MAJOR_VERSION == 5 && V8_MINOR_VERSION < 4)
-	create_params.array_buffer_allocator = allocator ? allocator : new array_buffer_allocator;
-#else
 	create_params.array_buffer_allocator = allocator ? allocator : v8::ArrayBuffer::Allocator::NewDefaultAllocator();
-#endif
 
 	return v8::Isolate::New(create_params);
 }
@@ -199,6 +204,11 @@ context::context(v8::Isolate* isolate, v8::ArrayBuffer::Allocator* allocator,
 		impl->Enter();
 	}
 	impl_.Reset(isolate_, impl);
+
+	{
+		std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+		alive_contexts().insert(this);
+	}
 }
 
 context::context(context&& src) noexcept
@@ -210,6 +220,9 @@ context::context(context&& src) noexcept
 	, modules_(std::move(src.modules_))
 	, lib_path_(std::move(src.lib_path_))
 {
+	std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+	alive_contexts().erase(&src);
+	alive_contexts().insert(this);
 }
 
 context& context::operator=(context&& src) noexcept
@@ -225,6 +238,11 @@ context& context::operator=(context&& src) noexcept
 		impl_ = std::move(src.impl_);
 		modules_ = std::move(src.modules_);
 		lib_path_ = std::move(src.lib_path_);
+		{
+			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+			alive_contexts().erase(&src);
+			alive_contexts().insert(this);
+		}
 	}
 	return *this;
 }
@@ -240,6 +258,11 @@ void context::destroy()
 	{
 		// moved out state
 		return;
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+		alive_contexts().erase(this);
 	}
 
 	// remove all class singletons and external data before modules unload
