@@ -1,5 +1,7 @@
 #pragma once
 
+#include "v8pp/config.hpp"
+
 #include <string_view>
 #include <cstdint>
 
@@ -59,7 +61,7 @@ inline type_info type_id()
 #else
 #error "Unknown compiler"
 #endif
-#if V8PP_PRETTIFY_TYPENAMES == 1
+#if V8PP_PRETTIFY_TYPENAMES
 	for (auto&& prefix : all_prefixes)
 	{
 		const auto p = name.find(prefix);
