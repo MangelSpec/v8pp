@@ -8,6 +8,14 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#ifdef WIN32
+#if defined(_M_AMD64) && !defined(_AMD64_)
+#define _AMD64_
+#endif
+#define NOMINMAX
+#include <stringapiset.h>
+#undef NOMINMAX
+#endif
 #include <limits>
 #include <memory>
 #include <span>
@@ -1054,7 +1062,14 @@ struct convert<std::filesystem::path, void>
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
 		std::string str = convert<std::string>::from_v8(isolate, value);
+#ifdef WIN32
+		int sz = MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), nullptr, 0);
+		std::wstring w(sz, 0);
+		MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), w.data(), sz);
+		return std::filesystem::path(w);
+#else
 		return std::filesystem::path(str);
+#endif
 	}
 
 	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
@@ -1062,14 +1077,29 @@ struct convert<std::filesystem::path, void>
 		if (auto str = convert<std::string>::try_from_v8(isolate, value))
 		{
 			std::string s = *std::move(str);
+#ifdef WIN32
+			int sz = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+			std::wstring w(sz, 0);
+			MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), sz);
+			return std::filesystem::path(w);
+#else
 			return std::filesystem::path(s);
+#endif
 		}
 		return std::nullopt;
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, from_type const& value)
 	{
+#ifdef WIN32
+		std::wstring w = value.generic_wstring();
+		int sz = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+		std::string utf8(sz, 0);
+		WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), utf8.data(), sz, nullptr, nullptr);
+		return convert<std::string>::to_v8(isolate, utf8);
+#else
 		return convert<std::string>::to_v8(isolate, value.string());
+#endif
 	}
 };
 
