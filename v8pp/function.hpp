@@ -184,31 +184,38 @@ namespace v8pp {
 
 /// Wrap C++ function into new V8 function template
 template<typename F, typename Traits = raw_ptr_traits>
-v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate, F&& func)
+v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate, F&& func,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 {
 	using F_type = typename std::decay_t<F>;
 	return v8::FunctionTemplate::New(isolate,
 		&detail::forward_function<Traits, F_type>,
-		detail::external_data::set(isolate, std::forward<F_type>(func)));
+		detail::external_data::set(isolate, std::forward<F_type>(func)),
+		v8::Local<v8::Signature>(), 0,
+		v8::ConstructorBehavior::kAllow,
+		side_effect_type);
 }
 
 /// Wrap C++ function into new V8 function
 /// Set nullptr or empty string for name
 /// to make the function anonymous
 template<typename F, typename Traits = raw_ptr_traits>
-v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view name, F&& func)
+v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view name, F&& func,
+	v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 {
 	using F_type = typename std::decay_t<F>;
 	v8::Local<v8::Function> fn;
 	if (!v8::Function::New(isolate->GetCurrentContext(),
 		&detail::forward_function<Traits, F_type>,
-		detail::external_data::set(isolate, std::forward<F_type>(func))).ToLocal(&fn))
+		detail::external_data::set(isolate, std::forward<F_type>(func)),
+		0, v8::ConstructorBehavior::kAllow,
+		side_effect_type).ToLocal(&fn))
 	{
 		return {};
 	}
 	if (!name.empty())
 	{
-		fn->SetName(to_v8(isolate, name));
+		fn->SetName(to_v8_name(isolate, name));
 	}
 	return fn;
 }

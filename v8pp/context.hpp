@@ -96,7 +96,7 @@ public:
 	context& class_(std::string_view name, v8pp::class_<T, Traits>& cl)
 	{
 		v8::HandleScope scope(isolate_);
-		cl.class_function_template()->SetClassName(v8pp::to_v8(isolate_, name));
+		cl.class_function_template()->SetClassName(v8pp::to_v8_name(isolate_, name));
 		return value(name, cl.js_function_template()->GetFunction(isolate_->GetCurrentContext()).ToLocalChecked());
 	}
 

@@ -301,37 +301,22 @@ public:
 	}
 
 	/// Set class member function, or static function, or lambda
+	/// Const member functions are automatically tagged as side-effect-free
 	template<typename Function>
 	class_& function(std::string_view name, Function&& func, v8::PropertyAttribute attr = v8::None)
 	{
-		constexpr bool is_mem_fun = std::is_member_function_pointer_v<Function>;
+		constexpr auto effect = detail::is_const_member_function_v<std::decay_t<Function>>
+			? v8::SideEffectType::kHasNoSideEffect
+			: v8::SideEffectType::kHasSideEffect;
+		return function_impl(name, std::forward<Function>(func), effect, attr);
+	}
 
-		static_assert(is_mem_fun || detail::is_callable<Function>::value,
-			"Function must be pointer to member function or callable object");
-
-		v8::HandleScope scope(isolate());
-
-		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate(), name);
-		v8::Local<v8::Data> wrapped_fun;
-
-		if constexpr (is_mem_fun)
-		{
-			using mem_func_type = typename detail::function_traits<Function>::template pointer_type<T>;
-			wrapped_fun = wrap_function_template<mem_func_type, Traits>(isolate(), mem_func_type(std::forward<Function>(func)));
-		}
-		else
-		{
-			wrapped_fun = wrap_function_template<Function, Traits>(isolate(), std::forward<Function>(func));
-		}
-
-		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
-		js_func->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
-		if constexpr (!is_mem_fun)
-		{
-			// non-member functions are also accessible on the constructor (e.g. X.static_fun())
-			js_func->Set(v8_name, wrapped_fun, attr);
-		}
-		return *this;
+	/// Set class member function with explicit side-effect type
+	template<typename Function>
+	class_& function(std::string_view name, Function&& func,
+		v8::SideEffectType side_effect, v8::PropertyAttribute attr = v8::None)
+	{
+		return function_impl(name, std::forward<Function>(func), side_effect, attr);
 	}
 
 	/// Set class member variable
@@ -345,7 +330,7 @@ public:
 		using attribute_type = typename detail::function_traits<Attribute>::template pointer_type<T>;
 		attribute_type attr = attribute;
 
-		v8::Local<v8::Name> v8_name = v8pp::to_v8(isolate(), name);
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
 		v8::AccessorNameGetterCallback getter = &member_get<attribute_type>;
 		v8::AccessorNameSetterCallback setter = &member_set<attribute_type>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr));
@@ -353,11 +338,17 @@ public:
 		// SetAccessor removed from ObjectTemplate in V8 12.9+
 		class_info_.js_function_template()
 				->InstanceTemplate()
-				->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute(v8::DontDelete));
+				->SetNativeDataProperty(v8_name, getter, setter, data,
+					v8::PropertyAttribute(v8::DontDelete), v8::DEFAULT,
+					v8::SideEffectType::kHasNoSideEffect,
+					v8::SideEffectType::kHasSideEffectToReceiver);
 #else
 		class_info_.js_function_template()
 				->PrototypeTemplate()
-				->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
+				->SetAccessor(v8_name, getter, setter, data,
+					v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
+					v8::SideEffectType::kHasNoSideEffect,
+					v8::SideEffectType::kHasSideEffectToReceiver);
 #endif
 		return *this;
 	}
@@ -389,14 +380,21 @@ public:
 
 		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
 		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
-		v8::Local<v8::String> v8_name = v8pp::to_v8(isolate(), name);
+		v8::Local<v8::String> v8_name = v8pp::to_v8_name(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
+
+		v8::SideEffectType setter_effect = property_type::is_readonly
+			? v8::SideEffectType::kHasSideEffect
+			: v8::SideEffectType::kHasSideEffectToReceiver;
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 		// SetAccessor removed from ObjectTemplate in V8 12.9+
-		class_info_.js_function_template()->InstanceTemplate()->SetNativeDataProperty(v8_name, getter, setter, data, v8::PropertyAttribute(v8::DontDelete));
+		class_info_.js_function_template()->InstanceTemplate()->SetNativeDataProperty(v8_name, getter, setter, data,
+			v8::PropertyAttribute(v8::DontDelete), v8::DEFAULT,
+			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #else
-		//class_info_.class_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data, v8::PropertyAttribute::DontDelete);
-		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data, v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete));
+		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data,
+			v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
+			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #endif
 		return *this;
 	}
@@ -433,7 +431,7 @@ public:
 	{
 		v8::HandleScope scope(isolate());
 
-		class_info_.js_function_template()->PrototypeTemplate()->Set(v8pp::to_v8(isolate(), name), to_v8(isolate(), value),
+		class_info_.js_function_template()->PrototypeTemplate()->Set(v8pp::to_v8_name(isolate(), name), to_v8(isolate(), value),
 			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
 		return *this;
 	}
@@ -447,7 +445,7 @@ public:
 		v8::Local<v8::Context> context = iso->GetCurrentContext();
 
 		class_info_.js_function_template()->GetFunction(context).ToLocalChecked()
-			->DefineOwnProperty(context, v8pp::to_v8(iso, name), to_v8(iso, value),
+			->DefineOwnProperty(context, v8pp::to_v8_name(iso, name), to_v8(iso, value),
 				v8::PropertyAttribute(v8::DontDelete | (readonly ? v8::ReadOnly : 0))).FromJust();
 		return *this;
 	}
@@ -542,6 +540,42 @@ public:
 	}
 
 private:
+	template<typename Function>
+	class_& function_impl(std::string_view name, Function&& func,
+		v8::SideEffectType side_effect, v8::PropertyAttribute attr)
+	{
+		constexpr bool is_mem_fun = std::is_member_function_pointer_v<Function>;
+
+		static_assert(is_mem_fun || detail::is_callable<Function>::value,
+			"Function must be pointer to member function or callable object");
+
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		v8::Local<v8::Data> wrapped_fun;
+
+		if constexpr (is_mem_fun)
+		{
+			using mem_func_type = typename detail::function_traits<Function>::template pointer_type<T>;
+			wrapped_fun = wrap_function_template<mem_func_type, Traits>(isolate(),
+				mem_func_type(std::forward<Function>(func)), side_effect);
+		}
+		else
+		{
+			wrapped_fun = wrap_function_template<Function, Traits>(isolate(),
+				std::forward<Function>(func), side_effect);
+		}
+
+		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
+		js_func->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
+		if constexpr (!is_mem_fun)
+		{
+			// non-member functions are also accessible on the constructor (e.g. X.static_fun())
+			js_func->Set(v8_name, wrapped_fun, attr);
+		}
+		return *this;
+	}
+
 	template<typename Attribute>
 	static void member_get(v8::Local<v8::Name>,
 		v8::PropertyCallbackInfo<v8::Value> const& info)

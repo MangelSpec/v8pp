@@ -314,4 +314,12 @@ concept callable = std::is_function_v<std::remove_pointer_t<F>>
 template<typename F>
 using is_callable = std::bool_constant<callable<F>>;
 
+template<typename F>
+inline constexpr bool is_const_member_function_v = false;
+
+template<typename F>
+	requires std::is_member_function_pointer_v<F>
+inline constexpr bool is_const_member_function_v<F> =
+	std::is_const_v<typename function_traits<F>::class_type>;
+
 } // namespace v8pp::detail

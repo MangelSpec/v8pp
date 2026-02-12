@@ -1098,11 +1098,10 @@ inline v8::Local<v8::String> to_v8(v8::Isolate* isolate, char const* str, size_t
 	return convert<std::string_view>::to_v8(isolate, std::string_view(str, len));
 }
 
-template<size_t N>
-v8::Local<v8::String> to_v8(v8::Isolate* isolate,
-	char const (&str)[N], size_t len = N - 1)
+template<int N>
+v8::Local<v8::String> to_v8(v8::Isolate* isolate, char const (&str)[N])
 {
-	return convert<std::string_view>::to_v8(isolate, std::string_view(str, len));
+	return v8::String::NewFromUtf8Literal(isolate, str);
 }
 
 inline v8::Local<v8::String> to_v8(v8::Isolate* isolate, char16_t const* str)
@@ -1140,6 +1139,13 @@ v8::Local<v8::String> to_v8(v8::Isolate* isolate,
 	return convert<std::wstring_view>::to_v8(isolate, std::wstring_view(str, len));
 }
 #endif
+
+/// Create an internalized V8 string, optimized for property/method names
+inline v8::Local<v8::String> to_v8_name(v8::Isolate* isolate, std::string_view name)
+{
+	return v8::String::NewFromUtf8(isolate, name.data(),
+		v8::NewStringType::kInternalized, static_cast<int>(name.size())).ToLocalChecked();
+}
 
 template<typename T>
 v8::Local<v8::Value> to_v8(v8::Isolate* isolate, std::optional<T> const& value)
