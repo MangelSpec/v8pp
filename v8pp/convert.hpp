@@ -9,6 +9,9 @@
 #include <cstring>
 #include <filesystem>
 #ifdef WIN32
+#if defined(_M_AMD64) && !defined(_AMD64_)
+#define _AMD64_
+#endif
 #include <stringapiset.h>
 #endif
 #include <limits>
