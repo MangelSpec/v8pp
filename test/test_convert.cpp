@@ -245,12 +245,12 @@ void test_convert_tuple(v8::Isolate* isolate)
 		v8pp::from_v8<std::tuple<size_t, bool, std::string>>(isolate, tuple_1_);
 	});
 
-	check_ex<v8pp::invalid_argument>("String", [isolate, &tuple_1]()
 	{
-		// wrong types
+		// bool converts to string via ToString()
 		v8::Local<v8::Array> tuple_1_ = v8pp::to_v8(isolate, tuple_1);
-		v8pp::from_v8<std::tuple<size_t, std::string>>(isolate, tuple_1_);
-	});
+		auto result = v8pp::from_v8<std::tuple<size_t, std::string>>(isolate, tuple_1_);
+		check_eq("tuple bool->string", std::get<1>(result), "true");
+	}
 }
 
 template<typename... Ts>
@@ -450,6 +450,140 @@ void test_convert_variant(v8::Isolate* isolate)
 	optional_check(0, std::optional<std::string>{}, false);
 }
 
+void test_convert_crash_safety(v8::Isolate* isolate)
+{
+	// from_v8<int> with non-numeric types should throw, not crash
+	check_ex<v8pp::invalid_argument>("from_v8<int> undefined", [isolate]()
+	{
+		v8pp::from_v8<int>(isolate, v8::Undefined(isolate));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<int> null", [isolate]()
+	{
+		v8pp::from_v8<int>(isolate, v8::Null(isolate));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<int> string", [isolate]()
+	{
+		v8pp::from_v8<int>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<int> bool", [isolate]()
+	{
+		v8pp::from_v8<int>(isolate, v8pp::to_v8(isolate, true));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<int> object", [isolate]()
+	{
+		v8pp::from_v8<int>(isolate, v8::Object::New(isolate));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<int> empty handle", [isolate]()
+	{
+		v8pp::from_v8<int>(isolate, v8::Local<v8::Value>());
+	});
+
+	// from_v8<uint32_t> with non-numeric
+	check_ex<v8pp::invalid_argument>("from_v8<uint32_t> string", [isolate]()
+	{
+		v8pp::from_v8<uint32_t>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+
+	// from_v8<double> with non-numeric
+	check_ex<v8pp::invalid_argument>("from_v8<double> string", [isolate]()
+	{
+		v8pp::from_v8<double>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<double> undefined", [isolate]()
+	{
+		v8pp::from_v8<double>(isolate, v8::Undefined(isolate));
+	});
+
+	// from_v8<bool> with non-boolean
+	check_ex<v8pp::invalid_argument>("from_v8<bool> int", [isolate]()
+	{
+		v8pp::from_v8<bool>(isolate, v8pp::to_v8(isolate, 42));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<bool> string", [isolate]()
+	{
+		v8pp::from_v8<bool>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<bool> undefined", [isolate]()
+	{
+		v8pp::from_v8<bool>(isolate, v8::Undefined(isolate));
+	});
+
+	// from_v8<string> with empty handle
+	check_ex<v8pp::invalid_argument>("from_v8<string> empty handle", [isolate]()
+	{
+		v8pp::from_v8<std::string>(isolate, v8::Local<v8::Value>());
+	});
+
+	// from_v8<string> with object that has throwing toString (Phase 1a fix)
+	{
+		v8::TryCatch try_catch(isolate);
+		v8::Local<v8::Context> ctx = isolate->GetCurrentContext();
+		v8::Local<v8::Object> throwing_obj = v8::Object::New(isolate);
+		auto throwing_fn = v8::Function::New(ctx, [](v8::FunctionCallbackInfo<v8::Value> const& args)
+		{
+			args.GetIsolate()->ThrowException(
+				v8pp::to_v8(args.GetIsolate(), "toString throws!"));
+		}).ToLocalChecked();
+		throwing_obj->Set(ctx, v8pp::to_v8(isolate, "toString"), throwing_fn).FromJust();
+
+		check_ex<v8pp::invalid_argument>("from_v8<string> throwing toString", [isolate, &throwing_obj]()
+		{
+			v8pp::from_v8<std::string>(isolate, throwing_obj);
+		});
+	}
+
+	// from_v8<vector<int>> with non-array
+	check_ex<v8pp::invalid_argument>("from_v8<vector<int>> int", [isolate]()
+	{
+		v8pp::from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, 42));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<vector<int>> undefined", [isolate]()
+	{
+		v8pp::from_v8<std::vector<int>>(isolate, v8::Undefined(isolate));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<vector<int>> string", [isolate]()
+	{
+		v8pp::from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, "hello"));
+	});
+
+	// from_v8<map> with non-object
+	check_ex<v8pp::invalid_argument>("from_v8<map> int", [isolate]()
+	{
+		v8pp::from_v8<std::map<std::string, int>>(isolate, v8pp::to_v8(isolate, 42));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<map> array", [isolate]()
+	{
+		v8pp::from_v8<std::map<std::string, int>>(isolate, v8::Array::New(isolate));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<map> undefined", [isolate]()
+	{
+		v8pp::from_v8<std::map<std::string, int>>(isolate, v8::Undefined(isolate));
+	});
+
+	// from_v8 with default value — should return default on type mismatch, not crash
+	check_eq("from_v8<int> default on undefined",
+		v8pp::from_v8<int>(isolate, v8::Undefined(isolate), -1), -1);
+	check_eq("from_v8<int> default on string",
+		v8pp::from_v8<int>(isolate, v8pp::to_v8(isolate, "hello"), -1), -1);
+	check_eq("from_v8<int> default on null",
+		v8pp::from_v8<int>(isolate, v8::Null(isolate), -1), -1);
+	check_eq("from_v8<bool> default on int",
+		v8pp::from_v8<bool>(isolate, v8pp::to_v8(isolate, 42), false), false);
+	check_eq("from_v8<double> default on string",
+		v8pp::from_v8<double>(isolate, v8pp::to_v8(isolate, "hello"), -1.0), -1.0);
+
+	// Enum with non-numeric should throw
+	enum class color { red = 0, green = 1, blue = 2 };
+	check_ex<v8pp::invalid_argument>("from_v8<enum> string", [isolate]()
+	{
+		v8pp::from_v8<color>(isolate, v8pp::to_v8(isolate, "red"));
+	});
+	check_ex<v8pp::invalid_argument>("from_v8<enum> undefined", [isolate]()
+	{
+		v8pp::from_v8<color>(isolate, v8::Undefined(isolate));
+	});
+}
+
 void test_convert_try_from_v8(v8::Isolate* isolate)
 {
 	// Primitives: valid conversions return value
@@ -528,10 +662,7 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 	check("try optional<int> from string",
 		!v8pp::try_from_v8<std::optional<int>>(isolate, v8pp::to_v8(isolate, "hello")));
 
-	// Wrapped class: valid unwrap
-	v8pp::class_<U, v8pp::raw_ptr_traits> U_class(isolate);
-	U_class.template ctor<>().auto_wrap_objects(true);
-
+	// Wrapped class: valid unwrap (class_<U> already registered by test_convert_variant)
 	U u_obj{42};
 	auto u_v8 = v8pp::class_<U, v8pp::raw_ptr_traits>::reference_external(isolate, &u_obj);
 
@@ -543,12 +674,9 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 	check("try U* from int", !v8pp::try_from_v8<U*>(isolate, v8pp::to_v8(isolate, 42)));
 	check("try U* from plain object", !v8pp::try_from_v8<U*>(isolate, v8::Object::New(isolate)));
 
-	// Wrapped class via shared_ptr
-	v8pp::class_<V, v8pp::shared_ptr_traits> V_class(isolate);
-	V_class.template ctor<>().auto_wrap_objects(true);
-
+	// Wrapped class via shared_ptr (class_<V> already registered by test_convert_variant)
 	auto v_obj = std::make_shared<V>(V{"test"});
-	V_class.reference_external(isolate, v_obj);
+	v8pp::class_<V, v8pp::shared_ptr_traits>::reference_external(isolate, v_obj);
 	auto v_v8 = v8pp::class_<V, v8pp::shared_ptr_traits>::find_object(isolate, v_obj);
 
 	auto v_result = v8pp::try_from_v8<std::shared_ptr<V>>(isolate, v_v8);
@@ -611,5 +739,6 @@ void test_convert()
 	test_convert_optional(isolate);
 	test_convert_tuple(isolate);
 	test_convert_variant(isolate);
+	test_convert_crash_safety(isolate);
 	test_convert_try_from_v8(isolate);
 }

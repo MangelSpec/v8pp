@@ -48,4 +48,26 @@ void test_json()
 
 	v = v8pp::json_parse(isolate, "blah-blah");
 	check("parse error", v->IsNativeError());
+
+	// Phase 1a/1b crash safety: Stringify with circular reference should return empty, not crash
+	{
+		v8::TryCatch try_catch(isolate);
+		v8::Local<v8::Object> circular = v8::Object::New(isolate);
+		v8::Local<v8::Context> ctx = isolate->GetCurrentContext();
+		circular->Set(ctx, v8pp::to_v8(isolate, "self"), circular).FromJust();
+		str = v8pp::json_str(isolate, circular);
+		check("json_str circular returns empty", str.empty());
+	}
+
+	// json_str with empty value returns empty string
+	str = v8pp::json_str(isolate, v8::Local<v8::Value>());
+	check("json_str empty value", str.empty());
+
+	// json_object with empty property names (safety of GetPropertyNames path)
+	{
+		v8::Local<v8::Object> plain = v8::Object::New(isolate);
+		v8::Local<v8::Value> result = v8pp::json_object(isolate, plain);
+		check("json_object empty obj", !result.IsEmpty());
+		check_eq("json_object empty obj str", v8pp::json_str(isolate, result), "{}");
+	}
 }

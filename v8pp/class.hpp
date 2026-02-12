@@ -316,7 +316,13 @@ public:
 			wrapped_fun = wrap_function_template<Function, Traits>(isolate(), std::forward<Function>(func));
 		}
 
-		class_info_.js_function_template()->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
+		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
+		js_func->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
+		if constexpr (!is_mem_fun)
+		{
+			// non-member functions are also accessible on the constructor (e.g. X.static_fun())
+			js_func->Set(v8_name, wrapped_fun, attr);
+		}
 		return *this;
 	}
 

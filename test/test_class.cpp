@@ -230,11 +230,17 @@ void test_class_()
 	check_eq("C++ exception from X ctor",
 		run_script<std::string>(context, "ret = ''; try { new X(1, 2); } catch(err) { ret = err.message; } ret"),
 		"C++ exception");
-	check("Unhandled C++ exception from X ctor", context.run_script("x = new X(1, 2); x").IsEmpty());
+	{
+		v8::TryCatch try_catch(context.isolate());
+		check("Unhandled C++ exception from X ctor", context.run_script("x = new X(1, 2); x").IsEmpty());
+	}
 	check_eq("V8 exception from X ctor",
 		run_script<std::string>(context, "ret = ''; try { new X(1, 2, 3); } catch(err) { ret = err.message; } ret"),
 		"JS exception");
-	check("Unhandled V8 exception from X ctor", context.run_script("x = new X(1, 2, 3); x").IsEmpty());
+	{
+		v8::TryCatch try_catch(context.isolate());
+		check("Unhandled V8 exception from X ctor", context.run_script("x = new X(1, 2, 3); x").IsEmpty());
+	}
 
 	check_eq("X object", run_script<int>(context, "x = new X(); x.var += x.konst"), 100);
 	check_eq("X::rprop", run_script<int>(context, "x = new X(); x.rprop"), 1);
@@ -268,6 +274,26 @@ void test_class_()
 	{
 		run_script<int>(context, "x = new X(); f = x.fun1; f(1)");
 	});
+
+	// Crash safety: method call on plain object via .call() should throw JS error, not crash
+	check_eq("method call on plain object via .call()",
+		run_script<std::string>(context,
+			"try { x = new X(); x.fun1.call({}, 1); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+
+	// Crash safety: property read on non-wrapped object should throw JS error, not crash
+	check_eq("property read on non-wrapped object",
+		run_script<std::string>(context,
+			"try { var desc = Object.getOwnPropertyDescriptor(new X(), 'rprop');"
+			"desc.get.call({}); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+
+	// Crash safety: property write on non-wrapped object should throw JS error, not crash
+	check_eq("property write on non-wrapped object",
+		run_script<std::string>(context,
+			"try { var desc = Object.getOwnPropertyDescriptor(new X(), 'wprop');"
+			"desc.set.call({}, 42); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
 
 	check_eq("JSON.stringify(X)",
 		run_script<std::string>(context, "JSON.stringify({'obj': new X(10), 'arr': [new X(11), new X(12)] })"),
