@@ -129,33 +129,10 @@ void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
 	args.GetReturnValue().Set(scope.Escape(result));
 }
 
-#if V8_MAJOR_VERSION < 5 || (V8_MAJOR_VERSION == 5 && V8_MINOR_VERSION < 4)
-struct array_buffer_allocator : v8::ArrayBuffer::Allocator
-{
-	void* Allocate(size_t length)
-	{
-		return calloc(length, 1);
-	}
-	void* AllocateUninitialized(size_t length)
-	{
-		return malloc(length);
-	}
-	void Free(void* data, size_t length)
-	{
-		free(data);
-		(void)length;
-	}
-};
-#endif
-
 v8::Isolate* context::create_isolate(v8::ArrayBuffer::Allocator* allocator)
 {
 	v8::Isolate::CreateParams create_params;
-#if V8_MAJOR_VERSION < 5 || (V8_MAJOR_VERSION == 5 && V8_MINOR_VERSION < 4)
-	create_params.array_buffer_allocator = allocator ? allocator : new array_buffer_allocator;
-#else
 	create_params.array_buffer_allocator = allocator ? allocator : v8::ArrayBuffer::Allocator::NewDefaultAllocator();
-#endif
 
 	return v8::Isolate::New(create_params);
 }
