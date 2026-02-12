@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 
+# CMP0091: use CMAKE_MSVC_RUNTIME_LIBRARY instead of compiler flags
+if(POLICY CMP0091)
+	cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(v8pp
 	VERSION 2.1.1
 	DESCRIPTION "Bind C++ functions and classes into V8 JavaScript engine"
@@ -13,6 +18,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (MSVC)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zc:__cplusplus") # enable correct __cplusplus macro
+	# static CRT when using a custom V8 monolith built with /MT
+	if(DEFINED CUSTOM_V8_LIB_PATH)
+		set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+	endif()
 endif()
 
 option(BUILD_SHARED_LIBS "Build shared library" ON)
