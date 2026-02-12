@@ -81,8 +81,6 @@ void run_tests()
 
 int main(int argc, char const* argv[])
 {
-	std::cerr << "[debug] main() entered" << std::endl;
-
 	std::vector<std::string> scripts;
 	std::string lib_path;
 	bool do_tests = false;
@@ -126,43 +124,29 @@ int main(int argc, char const* argv[])
 		}
 	}
 
-	std::cerr << "[debug] SetFlagsFromString" << std::endl;
 	// allow Isolate::RequestGarbageCollectionForTesting() before Initialize()
 	// for v8pp::class_ tests
 	v8::V8::SetFlagsFromString("--expose_gc");
 
-	std::cerr << "[debug] InitializeExternalStartupData" << std::endl;
 	//v8::V8::InitializeICU();
 	v8::V8::InitializeExternalStartupData(argv[0]);
-
-	std::cerr << "[debug] NewDefaultPlatform" << std::endl;
 #if V8_MAJOR_VERSION >= 7
 	std::unique_ptr<v8::Platform> platform(v8::platform::NewDefaultPlatform());
 #else
 	std::unique_ptr<v8::Platform> platform(v8::platform::CreateDefaultPlatform());
 #endif
-
-	std::cerr << "[debug] InitializePlatform" << std::endl;
 	v8::V8::InitializePlatform(platform.get());
-
-	std::cerr << "[debug] V8::Initialize" << std::endl;
 	v8::V8::Initialize();
-
-	std::cerr << "[debug] V8 initialized, do_tests=" << do_tests << " scripts=" << scripts.size() << std::endl;
 
 	if (do_tests || scripts.empty())
 	{
-		std::cerr << "[debug] running tests" << std::endl;
 		run_tests();
-		std::cerr << "[debug] tests finished" << std::endl;
 	}
 
 	int result = EXIT_SUCCESS;
 	try
 	{
-		std::cerr << "[debug] creating v8pp::context" << std::endl;
 		v8pp::context context;
-		std::cerr << "[debug] v8pp::context created" << std::endl;
 
 		if (!lib_path.empty())
 		{
@@ -173,25 +157,19 @@ int main(int argc, char const* argv[])
 			v8::HandleScope scope(context.isolate());
 			context.run_file(script);
 		}
-		std::cerr << "[debug] destroying v8pp::context" << std::endl;
 	}
 	catch (std::exception const& ex)
 	{
 		std::cerr << ex.what() << std::endl;
 		result = EXIT_FAILURE;
 	}
-	std::cerr << "[debug] v8pp::context destroyed" << std::endl;
 
-	std::cerr << "[debug] V8::Dispose" << std::endl;
 	v8::V8::Dispose();
-
-	std::cerr << "[debug] ShutdownPlatform" << std::endl;
 #if V8_MAJOR_VERSION > 9 || (V8_MAJOR_VERSION == 9 && V8_MINOR_VERSION >= 8)
 	v8::V8::DisposePlatform();
 #else
 	v8::V8::ShutdownPlatform();
 #endif
 
-	std::cerr << "[debug] clean exit" << std::endl;
 	return result;
 }
