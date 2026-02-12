@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <concepts>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -318,24 +319,26 @@ struct convert<T, void>
 	}
 };
 
-// convert BigInt <-> integer types larger than 32 bits (int64_t, uint64_t, etc.)
-// to_v8 always produces BigInt. from_v8 accepts both BigInt and Number for ergonomics.
+// convert Number <-> integer types larger than 32 bits (int64_t, uint64_t, etc.)
+// to_v8 produces Number (double) for seamless JS arithmetic. Precision loss for
+// values > 2^53, but this covers all practical use cases (timestamps, counters, IDs).
+// from_v8 accepts both Number and BigInt for interop.
 template<std::integral T>
 	requires (sizeof(T) > sizeof(uint32_t))
 struct convert<T, void>
 {
 	using from_type = T;
-	using to_type = v8::Local<v8::BigInt>;
+	using to_type = v8::Local<v8::Number>;
 
 	static bool is_valid(v8::Isolate*, v8::Local<v8::Value> value)
 	{
-		return !value.IsEmpty() && (value->IsBigInt() || value->IsNumber());
+		return !value.IsEmpty() && (value->IsNumber() || value->IsBigInt());
 	}
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
 		if (auto result = try_from_v8(isolate, value)) return *result;
-		throw invalid_argument(isolate, value, "BigInt");
+		throw invalid_argument(isolate, value, "Number");
 	}
 
 	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
@@ -344,6 +347,7 @@ struct convert<T, void>
 
 		if (value->IsBigInt())
 		{
+			// Accept BigInt from JS side for interop
 			auto bigint = value.As<v8::BigInt>();
 			if constexpr (std::is_signed_v<T>)
 			{
@@ -356,21 +360,13 @@ struct convert<T, void>
 		}
 		else
 		{
-			// Accept Number for ergonomics (lossy for values > 2^53)
 			return static_cast<T>(value->IntegerValue(isolate->GetCurrentContext()).FromJust());
 		}
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, T value)
 	{
-		if constexpr (std::is_signed_v<T>)
-		{
-			return v8::BigInt::New(isolate, static_cast<int64_t>(value));
-		}
-		else
-		{
-			return v8::BigInt::NewFromUnsigned(isolate, static_cast<uint64_t>(value));
-		}
+		return v8::Number::New(isolate, static_cast<double>(value));
 	}
 };
 
@@ -589,11 +585,11 @@ public:
 		}
 		else if (value->IsInt32() || value->IsUint32())
 		{
-			return alternate<is_small_integral, std::is_floating_point, detail::is_optional>(isolate, value);
+			return alternate<is_small_integral, is_large_integral, std::is_floating_point, detail::is_optional>(isolate, value);
 		}
 		else if (value->IsNumber())
 		{
-			return alternate<std::is_floating_point, is_small_integral, detail::is_optional>(isolate, value);
+			return alternate<is_large_integral, std::is_floating_point, is_small_integral, detail::is_optional>(isolate, value);
 		}
 		else if (value->IsString())
 		{
@@ -739,6 +735,26 @@ private:
 							result = static_cast<T>(val);
 						else if (val <= std::numeric_limits<T>::max())
 							result = static_cast<T>(val);
+					}
+				}
+			}
+			else if constexpr (sizeof(T) > sizeof(uint32_t))
+			{
+				// For 64-bit integrals from Number, only match if the double
+				// is an exact integer within safe range (±2^53)
+				double d = value->NumberValue(isolate->GetCurrentContext()).FromJust();
+				constexpr double safe_max = static_cast<double>(uint64_t{1} << std::numeric_limits<double>::digits);
+				if (std::isfinite(d) && d == std::trunc(d))
+				{
+					if constexpr (std::is_signed_v<T>)
+					{
+						if (d >= -safe_max && d <= safe_max)
+							result = static_cast<T>(static_cast<int64_t>(d));
+					}
+					else
+					{
+						if (d >= 0.0 && d <= safe_max)
+							result = static_cast<T>(static_cast<uint64_t>(d));
 					}
 				}
 			}

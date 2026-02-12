@@ -142,7 +142,7 @@ The `convert<T>` system supports these C++ types:
 | Category | Types | V8 Representation |
 |----------|-------|-------------------|
 | Numeric | `bool`, `char`, integral, floating-point | `Boolean`, `Number` |
-| Large integers | `int64_t`, `uint64_t` (>32-bit) | `BigInt` |
+| Large integers | `int64_t`, `uint64_t` (>32-bit) | `Number` (double; accepts `BigInt` on input) |
 | Strings | `std::string`, `std::string_view`, `char const*`, wide strings | `String` |
 | Enums | any `enum` / `enum class` | `Number` (underlying type) |
 | Containers | `std::vector`, `std::list`, `std::deque`, etc. | `Array` |

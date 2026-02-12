@@ -315,14 +315,23 @@ void check_range(v8::Isolate* isolate)
 	variant_check<T> check_range{ isolate };
 
 	T zero{ 0 };
-	T min = std::numeric_limits<T>::lowest();
-	T max = std::numeric_limits<T>::max();
-
 	check_range(zero);
-	check_range(min);
-	check_range(max);
-	if constexpr (sizeof(T) <= sizeof(uint32_t))
+
+	if constexpr (sizeof(T) > sizeof(uint32_t))
 	{
+		// 64-bit types convert through double, so test values within double precision
+		check_range(static_cast<T>(V8_MAX_INT));
+		if constexpr (std::is_signed_v<T>)
+		{
+			check_range(static_cast<T>(V8_MIN_INT));
+		}
+	}
+	else
+	{
+		T min = std::numeric_limits<T>::lowest();
+		T max = std::numeric_limits<T>::max();
+		check_range(min);
+		check_range(max);
 		// For <=32-bit types, test out-of-range doubles
 		check_range.check_ex(std::nextafter(double(min), std::numeric_limits<double>::lowest()));
 		check_range.check_ex(std::nextafter(double(max), std::numeric_limits<double>::max()));
@@ -406,14 +415,18 @@ void test_convert_variant(v8::Isolate* isolate)
 	check_vector({1.f, 2.f, 3.f}, 4.f, std::optional<std::string>("testing"));
 	check_vector(std::vector<float>{}, 0.f, std::optional<std::string>{});
 
-	// The order here matters
-	variant_check<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t, float, double> order_check{ isolate };
+	// The order here matters — int64_t/uint64_t not included because both map
+	// to Number, so positive values can't distinguish them in a mixed variant
+	variant_check<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double> order_check{ isolate };
 	order_check(
 		std::numeric_limits<int8_t>::min(), std::numeric_limits<uint8_t>::max(),
 		std::numeric_limits<int16_t>::min(), std::numeric_limits<uint16_t>::max(),
 		std::numeric_limits<int32_t>::min(), std::numeric_limits<uint32_t>::max(),
-		std::numeric_limits<int64_t>::min(), std::numeric_limits<uint64_t>::max(),
 		std::numeric_limits<float>::lowest(), std::numeric_limits<double>::max());
+
+	// int64_t in variant: negative value resolves unambiguously
+	variant_check<int64_t, double> int64_check{ isolate };
+	int64_check(static_cast<int64_t>(V8_MIN_INT), std::numeric_limits<double>::max());
 
 	variant_check<bool, int8_t> simple_arithmetic{ isolate };
 	simple_arithmetic.check_ex(std::numeric_limits<uint32_t>::max()); // does not fit into int8_t
@@ -425,7 +438,7 @@ void test_convert_variant(v8::Isolate* isolate)
 	objects_only.check_ex(std::string{ "test" });
 	objects_only.check_ex(1.);
 
-	// BigInt conversion covers full int64_t/uint64_t range
+	// Number conversion covers int64_t/uint64_t (with double precision limits)
 	check_ranges<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t>(isolate);
 
 	// test map
@@ -684,37 +697,30 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 
 void test_convert_bigint(v8::Isolate* isolate)
 {
-	// Basic round-trip for int64_t
+	// Basic round-trip for int64_t (values within double precision)
 	test_conv(isolate, int64_t{0});
 	test_conv(isolate, int64_t{42});
 	test_conv(isolate, int64_t{-42});
-	test_conv(isolate, std::numeric_limits<int64_t>::min());
-	test_conv(isolate, std::numeric_limits<int64_t>::max());
 
-	// Basic round-trip for uint64_t
+	// Basic round-trip for uint64_t (values within double precision)
 	test_conv(isolate, uint64_t{0});
 	test_conv(isolate, uint64_t{42});
-	test_conv(isolate, std::numeric_limits<uint64_t>::max());
 
-	// Values beyond double precision round-trip exactly through BigInt
-	int64_t big_signed = int64_t{1} << 60;
-	test_conv(isolate, big_signed);
-	test_conv(isolate, -big_signed);
-
-	uint64_t big_unsigned = uint64_t{1} << 63;
-	test_conv(isolate, big_unsigned);
-
-	// to_v8 produces BigInt
+	// to_v8 produces Number (not BigInt)
 	auto v8_val = v8pp::to_v8(isolate, int64_t{123});
-	check("int64_t to_v8 is BigInt", v8_val->IsBigInt());
+	check("int64_t to_v8 is Number", v8_val->IsNumber());
 
 	auto v8_uval = v8pp::to_v8(isolate, uint64_t{456});
-	check("uint64_t to_v8 is BigInt", v8_uval->IsBigInt());
+	check("uint64_t to_v8 is Number", v8_uval->IsNumber());
 
-	// from_v8 accepts Number for ergonomics
+	// from_v8 accepts Number
 	auto num_val = v8::Number::New(isolate, 42.0);
 	check_eq("int64_t from Number", v8pp::from_v8<int64_t>(isolate, num_val), int64_t{42});
 	check_eq("uint64_t from Number", v8pp::from_v8<uint64_t>(isolate, num_val), uint64_t{42});
+
+	// from_v8 also accepts BigInt for interop
+	auto bigint_val = v8::BigInt::New(isolate, 99);
+	check_eq("int64_t from BigInt", v8pp::from_v8<int64_t>(isolate, bigint_val), int64_t{99});
 
 	// from_v8 rejects non-numeric types
 	check_ex<v8pp::invalid_argument>("int64_t from string", [isolate]()
@@ -726,7 +732,7 @@ void test_convert_bigint(v8::Isolate* isolate)
 		v8pp::from_v8<uint64_t>(isolate, v8pp::to_v8(isolate, true));
 	});
 
-	// try_from_v8 for BigInt
+	// try_from_v8 for int64_t
 	auto try_i64 = v8pp::try_from_v8<int64_t>(isolate, v8pp::to_v8(isolate, int64_t{-999}));
 	check("try int64_t valid", try_i64.has_value());
 	check_eq("try int64_t value", *try_i64, int64_t{-999});
