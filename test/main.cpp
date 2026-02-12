@@ -27,6 +27,8 @@ void run_tests()
 	void test_property();
 	void test_object();
 	void test_json();
+	void test_overload();
+	void test_fast_api();
 
 	std::pair<char const*, void (*)()> tests[] =
 	{
@@ -44,6 +46,8 @@ void run_tests()
 		{"test_property", test_property},
 		{"test_object", test_object},
 		{"test_json", test_json},
+		{"test_overload", test_overload},
+		{"test_fast_api", test_fast_api},
 	};
 
 	for (auto const& test : tests)

@@ -8,6 +8,7 @@
 
 #include "v8pp/config.hpp"
 #include "v8pp/function.hpp"
+#include "v8pp/overload.hpp"
 #include "v8pp/property.hpp"
 #include "v8pp/ptr_traits.hpp"
 #include "v8pp/type_info.hpp"
@@ -277,6 +278,18 @@ public:
 		return *this;
 	}
 
+	/// Set class constructor signature with default parameter values
+	template<typename... Args, typename... Defs>
+	class_& ctor(v8pp::defaults<Defs...> defs)
+	{
+		class_info_.set_ctor([defs = std::move(defs)](v8::FunctionCallbackInfo<v8::Value> const& args)
+		{
+			auto object = detail::call_from_v8<Traits>(Traits::template create<T, Args...>, args, defs);
+			return std::make_pair(object, Traits::object_size(object));
+		});
+		return *this;
+	}
+
 	/// Inhert from C++ class U
 	template<typename U>
 	class_& inherit()
@@ -317,6 +330,62 @@ public:
 		v8::SideEffectType side_effect, v8::PropertyAttribute attr = v8::None)
 	{
 		return function_impl(name, std::forward<Function>(func), side_effect, attr);
+	}
+
+	/// Set class member function with default parameter values
+	template<typename Function, typename... Defs>
+	class_& function(std::string_view name, Function&& func, v8pp::defaults<Defs...> defs,
+		v8::PropertyAttribute attr = v8::None)
+	{
+		constexpr auto effect = detail::is_const_member_function_v<std::decay_t<Function>>
+			? v8::SideEffectType::kHasNoSideEffect
+			: v8::SideEffectType::kHasSideEffect;
+		return function_impl(name, std::forward<Function>(func), std::move(defs), effect, attr);
+	}
+
+	/// Set class function with Fast API callback
+	template<auto FuncPtr>
+	class_& function(std::string_view name, fast_function<FuncPtr>, v8::PropertyAttribute attr = v8::None)
+	{
+		using F = typename fast_function<FuncPtr>::func_type;
+		constexpr bool is_mem_fun = std::is_member_function_pointer_v<F>;
+		constexpr auto side_effect = detail::is_const_member_function_v<F>
+			? v8::SideEffectType::kHasNoSideEffect
+			: v8::SideEffectType::kHasSideEffect;
+
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		auto wrapped_fun = wrap_function_template<FuncPtr, Traits>(isolate(),
+			fast_function<FuncPtr>{}, side_effect);
+
+		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
+		js_func->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
+		if constexpr (!is_mem_fun)
+		{
+			js_func->Set(v8_name, wrapped_fun, attr);
+		}
+		return *this;
+	}
+
+	/// Set multiple overloaded member/static functions
+	template<typename F1, typename F2, typename... Fs>
+		requires (detail::is_callable<std::decay_t<F2>>::value
+			|| std::is_member_function_pointer_v<std::decay_t<F2>>
+			|| is_overload_entry<std::decay_t<F2>>::value)
+	class_& function(std::string_view name, F1&& f1, F2&& f2, Fs&&... fs)
+	{
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		v8::Local<v8::Data> wrapped_fun = wrap_overload_template<Traits>(isolate(),
+			std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...);
+
+		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
+		js_func->PrototypeTemplate()->Set(v8_name, wrapped_fun);
+		// Also on constructor for static access
+		js_func->Set(v8_name, wrapped_fun);
+		return *this;
 	}
 
 	/// Set class member variable
@@ -571,6 +640,41 @@ private:
 		if constexpr (!is_mem_fun)
 		{
 			// non-member functions are also accessible on the constructor (e.g. X.static_fun())
+			js_func->Set(v8_name, wrapped_fun, attr);
+		}
+		return *this;
+	}
+
+	template<typename Function, typename... Defs>
+	class_& function_impl(std::string_view name, Function&& func,
+		v8pp::defaults<Defs...> defs, v8::SideEffectType side_effect, v8::PropertyAttribute attr)
+	{
+		constexpr bool is_mem_fun = std::is_member_function_pointer_v<Function>;
+
+		static_assert(is_mem_fun || detail::is_callable<Function>::value,
+			"Function must be pointer to member function or callable object");
+
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		v8::Local<v8::Data> wrapped_fun;
+
+		if constexpr (is_mem_fun)
+		{
+			using mem_func_type = typename detail::function_traits<Function>::template pointer_type<T>;
+			wrapped_fun = wrap_function_template<mem_func_type, Traits>(isolate(),
+				mem_func_type(std::forward<Function>(func)), std::move(defs), side_effect);
+		}
+		else
+		{
+			wrapped_fun = wrap_function_template<Function, Traits>(isolate(),
+				std::forward<Function>(func), std::move(defs), side_effect);
+		}
+
+		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
+		js_func->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
+		if constexpr (!is_mem_fun)
+		{
 			js_func->Set(v8_name, wrapped_fun, attr);
 		}
 		return *this;
