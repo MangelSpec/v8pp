@@ -67,8 +67,6 @@ Tested on:
 - Concepts replace SFINAE for type dispatch (`mapping`, `sequence`, `set_like`, `callable`, etc.)
 - Dead V8 < 9.0 code paths removed
 
-For a detailed change-by-change analysis, see [docs/FORK_CHANGES.md](docs/FORK_CHANGES.md).
-
 ## Building and testing
 
 The library has a set of tests that can be configured, built, and run with CMake:
