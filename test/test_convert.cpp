@@ -450,6 +450,114 @@ void test_convert_variant(v8::Isolate* isolate)
 	optional_check(0, std::optional<std::string>{}, false);
 }
 
+void test_convert_try_from_v8(v8::Isolate* isolate)
+{
+	// Primitives: valid conversions return value
+	auto int_result = v8pp::try_from_v8<int>(isolate, v8pp::to_v8(isolate, 42));
+	check("try int valid", int_result.has_value());
+	check_eq("try int value", *int_result, 42);
+
+	auto uint_result = v8pp::try_from_v8<uint32_t>(isolate, v8pp::to_v8(isolate, 100u));
+	check("try uint valid", uint_result.has_value());
+	check_eq("try uint value", *uint_result, 100u);
+
+	auto double_result = v8pp::try_from_v8<double>(isolate, v8pp::to_v8(isolate, 3.14));
+	check("try double valid", double_result.has_value());
+	check_eq("try double value", *double_result, 3.14);
+
+	auto bool_result = v8pp::try_from_v8<bool>(isolate, v8pp::to_v8(isolate, true));
+	check("try bool valid", bool_result.has_value());
+	check_eq("try bool value", *bool_result, true);
+
+	// Primitives: type mismatch returns nullopt
+	check("try int from string", !v8pp::try_from_v8<int>(isolate, v8pp::to_v8(isolate, "hello")));
+	check("try int from bool", !v8pp::try_from_v8<int>(isolate, v8pp::to_v8(isolate, true)));
+	check("try bool from int", !v8pp::try_from_v8<bool>(isolate, v8pp::to_v8(isolate, 42)));
+	check("try int from undefined", !v8pp::try_from_v8<int>(isolate, v8::Undefined(isolate)));
+	check("try int from null", !v8pp::try_from_v8<int>(isolate, v8::Null(isolate)));
+	check("try int from empty", !v8pp::try_from_v8<int>(isolate, v8::Local<v8::Value>()));
+
+	// Strings: valid conversion
+	auto str_result = v8pp::try_from_v8<std::string>(isolate, v8pp::to_v8(isolate, "hello"));
+	check("try string valid", str_result.has_value());
+	check_eq("try string value", *str_result, std::string("hello"));
+
+	// Strings: any non-empty value converts to string (via toString)
+	auto str_from_int = v8pp::try_from_v8<std::string>(isolate, v8pp::to_v8(isolate, 42));
+	check("try string from int", str_from_int.has_value());
+	check_eq("try string from int value", *str_from_int, std::string("42"));
+
+	// Strings: empty handle returns nullopt
+	check("try string from empty", !v8pp::try_from_v8<std::string>(isolate, v8::Local<v8::Value>()));
+
+	// Enums
+	enum class color { red = 0, green = 1, blue = 2 };
+	auto enum_result = v8pp::try_from_v8<color>(isolate, v8pp::to_v8(isolate, 1));
+	check("try enum valid", enum_result.has_value());
+	check_eq("try enum value", *enum_result, color::green);
+	check("try enum from string", !v8pp::try_from_v8<color>(isolate, v8pp::to_v8(isolate, "red")));
+
+	// Sequences
+	auto vec_result = v8pp::try_from_v8<std::vector<int>>(isolate,
+		v8pp::to_v8(isolate, std::vector<int>{1, 2, 3}));
+	check("try vector valid", vec_result.has_value());
+	check_eq("try vector value", *vec_result, std::vector<int>({1, 2, 3}));
+	check("try vector from int", !v8pp::try_from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, 42)));
+
+	// Maps
+	check("try map from int", !v8pp::try_from_v8<std::map<std::string, int>>(isolate, v8pp::to_v8(isolate, 42)));
+
+	// Tuples
+	auto tuple_val = std::tuple<int, bool>{42, true};
+	auto tuple_result = v8pp::try_from_v8<std::tuple<int, bool>>(isolate, v8pp::to_v8(isolate, tuple_val));
+	check("try tuple valid", tuple_result.has_value());
+	check_eq("try tuple value", *tuple_result, tuple_val);
+	check("try tuple from int", !v8pp::try_from_v8<std::tuple<int, bool>>(isolate, v8pp::to_v8(isolate, 42)));
+
+	// Optional: undefined/null returns optional containing nullopt
+	auto opt_undef = v8pp::try_from_v8<std::optional<int>>(isolate, v8::Undefined(isolate));
+	check("try optional undef valid", opt_undef.has_value());
+	check("try optional undef is nullopt", !opt_undef->has_value());
+
+	auto opt_val = v8pp::try_from_v8<std::optional<int>>(isolate, v8pp::to_v8(isolate, 42));
+	check("try optional<int> valid", opt_val.has_value());
+	check("try optional<int> has value", opt_val->has_value());
+	check_eq("try optional<int> value", **opt_val, 42);
+
+	// Optional: wrong type returns outer nullopt
+	check("try optional<int> from string",
+		!v8pp::try_from_v8<std::optional<int>>(isolate, v8pp::to_v8(isolate, "hello")));
+
+	// Wrapped class: valid unwrap
+	v8pp::class_<U, v8pp::raw_ptr_traits> U_class(isolate);
+	U_class.template ctor<>().auto_wrap_objects(true);
+
+	U u_obj{42};
+	auto u_v8 = v8pp::class_<U, v8pp::raw_ptr_traits>::reference_external(isolate, &u_obj);
+
+	auto u_ptr_result = v8pp::try_from_v8<U*>(isolate, u_v8);
+	check("try U* valid", u_ptr_result.has_value());
+	check_eq("try U* value", (*u_ptr_result)->value, 42);
+
+	// Wrapped class: wrong object type returns nullopt
+	check("try U* from int", !v8pp::try_from_v8<U*>(isolate, v8pp::to_v8(isolate, 42)));
+	check("try U* from plain object", !v8pp::try_from_v8<U*>(isolate, v8::Object::New(isolate)));
+
+	// Wrapped class via shared_ptr
+	v8pp::class_<V, v8pp::shared_ptr_traits> V_class(isolate);
+	V_class.template ctor<>().auto_wrap_objects(true);
+
+	auto v_obj = std::make_shared<V>(V{"test"});
+	V_class.reference_external(isolate, v_obj);
+	auto v_v8 = v8pp::class_<V, v8pp::shared_ptr_traits>::find_object(isolate, v_obj);
+
+	auto v_result = v8pp::try_from_v8<std::shared_ptr<V>>(isolate, v_v8);
+	check("try shared_ptr<V> valid", v_result.has_value());
+	check_eq("try shared_ptr<V> value", (*v_result)->value, std::string("test"));
+
+	check("try shared_ptr<V> from int", !v8pp::try_from_v8<std::shared_ptr<V>>(isolate, v8pp::to_v8(isolate, 42)));
+}
+
 void test_convert()
 {
 	v8pp::context context;
@@ -503,4 +611,5 @@ void test_convert()
 	test_convert_optional(isolate);
 	test_convert_tuple(isolate);
 	test_convert_variant(isolate);
+	test_convert_try_from_v8(isolate);
 }

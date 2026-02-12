@@ -76,18 +76,46 @@ struct convert<String, typename std::enable_if<detail::is_string<String>::value>
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-		if (!is_valid(isolate, value))
+		if (auto result = try_from_v8(isolate, value))
 		{
-			throw invalid_argument(isolate, value, "String");
+			return *std::move(result);
 		}
+		throw invalid_argument(isolate, value, "String");
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (value.IsEmpty()) return std::nullopt;
 
 		v8::HandleScope scope(isolate);
 		v8::Local<v8::String> str;
 		if (!value->ToString(isolate->GetCurrentContext()).ToLocal(&str))
 		{
-			throw invalid_argument(isolate, value, "String");
+			return std::nullopt;
 		}
 
+		return extract_string(isolate, str);
+	}
+
+	static to_type to_v8(v8::Isolate* isolate, std::basic_string_view<Char, Traits> value)
+	{
+		if constexpr (sizeof(Char) == 1)
+		{
+			return v8::String::NewFromUtf8(isolate,
+				reinterpret_cast<char const*>(value.data()),
+				v8::NewStringType::kNormal, static_cast<int>(value.size())).ToLocalChecked();
+		}
+		else
+		{
+			return v8::String::NewFromTwoByte(isolate,
+				reinterpret_cast<uint16_t const*>(value.data()),
+				v8::NewStringType::kNormal, static_cast<int>(value.size())).ToLocalChecked();
+		}
+	}
+
+private:
+	static from_type extract_string(v8::Isolate* isolate, v8::Local<v8::String> str)
+	{
 #if V8_MAJOR_VERSION > 13 || (V8_MAJOR_VERSION == 13 && V8_MINOR_VERSION >= 3)
 		if constexpr (sizeof(Char) == 1)
 		{
@@ -119,22 +147,6 @@ struct convert<String, typename std::enable_if<detail::is_string<String>::value>
 			return result;
 		}
 #endif
-	}
-
-	static to_type to_v8(v8::Isolate* isolate, std::basic_string_view<Char, Traits> value)
-	{
-		if constexpr (sizeof(Char) == 1)
-		{
-			return v8::String::NewFromUtf8(isolate,
-				reinterpret_cast<char const*>(value.data()),
-				v8::NewStringType::kNormal, static_cast<int>(value.size())).ToLocalChecked();
-		}
-		else
-		{
-			return v8::String::NewFromTwoByte(isolate,
-				reinterpret_cast<uint16_t const*>(value.data()),
-				v8::NewStringType::kNormal, static_cast<int>(value.size())).ToLocalChecked();
-		}
 	}
 };
 
@@ -224,10 +236,13 @@ struct convert<bool>
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-		if (!is_valid(isolate, value))
-		{
-			throw invalid_argument(isolate, value, "Boolean");
-		}
+		if (auto result = try_from_v8(isolate, value)) return *result;
+		throw invalid_argument(isolate, value, "Boolean");
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (!is_valid(isolate, value)) return std::nullopt;
 		return value->BooleanValue(isolate);
 	}
 
@@ -250,10 +265,13 @@ struct convert<T, typename std::enable_if<std::is_integral<T>::value>::type>
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-		if (!is_valid(isolate, value))
-		{
-			throw invalid_argument(isolate, value, "Number");
-		}
+		if (auto result = try_from_v8(isolate, value)) return *result;
+		throw invalid_argument(isolate, value, "Number");
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (!is_valid(isolate, value)) return std::nullopt;
 
 		if constexpr (sizeof(T) <= sizeof(uint32_t))
 		{
@@ -313,6 +331,12 @@ struct convert<T, typename std::enable_if<std::is_enum<T>::value>::type>
 		return static_cast<T>(convert<underlying_type>::from_v8(isolate, value));
 	}
 
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		auto result = convert<underlying_type>::try_from_v8(isolate, value);
+		return result ? std::optional<from_type>{static_cast<T>(*result)} : std::nullopt;
+	}
+
 	static to_type to_v8(v8::Isolate* isolate, T value)
 	{
 		return convert<underlying_type>::to_v8(isolate,
@@ -333,11 +357,13 @@ struct convert<T, typename std::enable_if<std::is_floating_point<T>::value>::typ
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-		if (!is_valid(isolate, value))
-		{
-			throw invalid_argument(isolate, value, "Number");
-		}
+		if (auto result = try_from_v8(isolate, value)) return *result;
+		throw invalid_argument(isolate, value, "Number");
+	}
 
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (!is_valid(isolate, value)) return std::nullopt;
 		return static_cast<T>(value->NumberValue(isolate->GetCurrentContext()).FromJust());
 	}
 
@@ -375,6 +401,19 @@ struct convert<std::optional<T>>
 		}
 	}
 
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (value.IsEmpty() || value->IsNullOrUndefined())
+		{
+			return from_type{std::nullopt};
+		}
+		if (convert<T>::is_valid(isolate, value))
+		{
+			return from_type{convert<T>::from_v8(isolate, value)};
+		}
+		return std::nullopt;
+	}
+
 	static to_type to_v8(v8::Isolate* isolate, std::optional<T> const& value)
 	{
 		if (value)
@@ -409,6 +448,12 @@ struct convert<std::tuple<Ts...>>
 		{
 			throw invalid_argument(isolate, value, "Tuple");
 		}
+		return from_v8_impl(isolate, value, std::make_index_sequence<N>{});
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (!is_valid(isolate, value)) return std::nullopt;
 		return from_v8_impl(isolate, value, std::make_index_sequence<N>{});
 	}
 
@@ -642,10 +687,13 @@ struct convert<Sequence, typename std::enable_if<detail::is_sequence<Sequence>::
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-		if (!is_valid(isolate, value))
-		{
-			throw invalid_argument(isolate, value, "Array");
-		}
+		if (auto result = try_from_v8(isolate, value)) return *std::move(result);
+		throw invalid_argument(isolate, value, "Array");
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (!is_valid(isolate, value)) return std::nullopt;
 
 		v8::HandleScope scope(isolate);
 		v8::Local<v8::Context> context = isolate->GetCurrentContext();
@@ -723,10 +771,13 @@ struct convert<Mapping, typename std::enable_if<detail::is_mapping<Mapping>::val
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-		if (!is_valid(isolate, value))
-		{
-			throw invalid_argument(isolate, value, "Object");
-		}
+		if (auto result = try_from_v8(isolate, value)) return *std::move(result);
+		throw invalid_argument(isolate, value, "Object");
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (!is_valid(isolate, value)) return std::nullopt;
 
 		v8::HandleScope scope(isolate);
 		v8::Local<v8::Context> context = isolate->GetCurrentContext();
@@ -734,7 +785,7 @@ struct convert<Mapping, typename std::enable_if<detail::is_mapping<Mapping>::val
 		v8::Local<v8::Array> prop_names;
 		if (!object->GetPropertyNames(context).ToLocal(&prop_names))
 		{
-			throw invalid_argument(isolate, value, "Object");
+			return std::nullopt;
 		}
 
 		from_type result{};
@@ -777,6 +828,12 @@ struct convert<v8::Local<T>>
 
 	static v8::Local<T> from_v8(v8::Isolate*, v8::Local<v8::Value> value)
 	{
+		return value.As<T>();
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (!is_valid(isolate, value)) return std::nullopt;
 		return value.As<T>();
 	}
 
@@ -836,6 +893,13 @@ struct convert<T*, typename std::enable_if<is_wrapped_class<T>::value>::type>
 		return class_<class_type, raw_ptr_traits>::unwrap_object(isolate, value);
 	}
 
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		// from_v8 returns nullptr without throwing on failure
+		auto ptr = from_v8(isolate, value);
+		return ptr ? std::optional<from_type>{ptr} : std::nullopt;
+	}
+
 	static to_type to_v8(v8::Isolate* isolate, T const* value)
 	{
 		return class_<class_type, raw_ptr_traits>::find_object(isolate, value);
@@ -868,6 +932,13 @@ struct convert<T, typename std::enable_if<is_wrapped_class<T>::value>::type>
 		throw std::runtime_error("failed to unwrap C++ object");
 	}
 
+	static std::optional<class_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (value.IsEmpty() || !value->IsObject()) return std::nullopt;
+		T* object = class_<class_type, raw_ptr_traits>::unwrap_object(isolate, value);
+		return object ? std::optional<class_type>{*object} : std::nullopt;
+	}
+
 	static to_type to_v8(v8::Isolate* isolate, T const& value)
 	{
 		v8::Local<v8::Object> result = class_<class_type, raw_ptr_traits>::find_object(isolate, value);
@@ -895,6 +966,13 @@ struct convert<std::shared_ptr<T>, typename std::enable_if<is_wrapped_class<T>::
 			return nullptr;
 		}
 		return class_<class_type, shared_ptr_traits>::unwrap_object(isolate, value);
+	}
+
+	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		// from_v8 returns empty shared_ptr without throwing on failure
+		auto ptr = from_v8(isolate, value);
+		return ptr ? std::optional<from_type>{std::move(ptr)} : std::nullopt;
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, std::shared_ptr<T> const& value)
@@ -930,6 +1008,13 @@ struct convert<T, ref_from_shared_ptr>
 		throw std::runtime_error("failed to unwrap C++ object");
 	}
 
+	static std::optional<class_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+	{
+		if (value.IsEmpty() || !value->IsObject()) return std::nullopt;
+		std::shared_ptr<T> object = class_<class_type, shared_ptr_traits>::unwrap_object(isolate, value);
+		return object ? std::optional<class_type>{*object} : std::nullopt;
+	}
+
 	static to_type to_v8(v8::Isolate* isolate, T const& value)
 	{
 		v8::Local<v8::Object> result = class_<class_type, shared_ptr_traits>::find_object(isolate, value);
@@ -962,6 +1047,38 @@ auto from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value, U const& default_
 	using return_type = decltype(convert<T>::from_v8(isolate, value));
 	return convert<T>::is_valid(isolate, value) ?
 		convert<T>::from_v8(isolate, value) : static_cast<return_type>(default_value);
+}
+
+namespace detail {
+
+// Fallback for user-defined converters that don't implement try_from_v8.
+// Uses is_valid + from_v8 (double validation, potential exception on type mismatch).
+template<typename T>
+[[deprecated("convert<T> specialization should implement try_from_v8() for optimal exception-free conversion")]]
+auto try_from_v8_fallback(v8::Isolate* isolate, v8::Local<v8::Value> value)
+{
+	using result_type = std::decay_t<typename convert<T>::from_type>;
+	if (!convert<T>::is_valid(isolate, value)) return std::optional<result_type>{};
+	return std::optional<result_type>{convert<T>::from_v8(isolate, value)};
+}
+
+} // namespace detail
+
+// Exception-free conversion: returns std::optional with the converted value,
+// or std::nullopt if the value cannot be converted to type T.
+// Distinct from convert<std::optional<T>> which handles missing/undefined JS arguments.
+// Delegates to convert<T>::try_from_v8 when available, falls back to is_valid + from_v8.
+template<typename T>
+auto try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
+{
+	if constexpr (requires { convert<T>::try_from_v8(isolate, value); })
+	{
+		return convert<T>::try_from_v8(isolate, value);
+	}
+	else
+	{
+		return detail::try_from_v8_fallback<T>(isolate, value);
+	}
 }
 
 inline v8::Local<v8::String> to_v8(v8::Isolate* isolate, char const* str)
