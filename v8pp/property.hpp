@@ -120,6 +120,11 @@ try
 	else
 	{
 		auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(info.GetIsolate(), info.This());
+		if (!obj)
+		{
+			info.GetReturnValue().Set(throw_ex(info.GetIsolate(), "accessing property on non-existent C++ object"));
+			return;
+		}
 		property_get(property.getter, name, info, *obj);
 	}
 }
@@ -144,6 +149,11 @@ try
 	else
 	{
 		auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(info.GetIsolate(), info.This());
+		if (!obj)
+		{
+			info.GetIsolate()->ThrowException(throw_ex(info.GetIsolate(), "setting property on non-existent C++ object"));
+			return;
+		}
 		property_set(property.setter, name, value, info, *obj);
 	}
 }

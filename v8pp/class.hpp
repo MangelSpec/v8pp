@@ -533,6 +533,11 @@ private:
 		try
 		{
 			auto self = unwrap_object(isolate, info.This());
+			if (!self)
+			{
+				info.GetReturnValue().Set(throw_ex(isolate, "accessing member on non-existent C++ object"));
+				return;
+			}
 			Attribute attr = detail::external_data::get<Attribute>(info.Data());
 			info.GetReturnValue().Set(to_v8(isolate, (*self).*attr));
 		}
@@ -551,6 +556,11 @@ private:
 		try
 		{
 			auto self = unwrap_object(isolate, info.This());
+			if (!self)
+			{
+				isolate->ThrowException(throw_ex(isolate, "setting member on non-existent C++ object"));
+				return;
+			}
 			Attribute ptr = detail::external_data::get<Attribute>(info.Data());
 			using attr_type = typename detail::function_traits<Attribute>::return_type;
 			(*self).*ptr = v8pp::from_v8<attr_type>(isolate, value);
