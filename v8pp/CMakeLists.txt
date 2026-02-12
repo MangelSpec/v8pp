@@ -30,6 +30,8 @@ set(V8PP_HEADERS
 	json.hpp
 	module.hpp
 	object.hpp
+	overload.hpp
+	promise.hpp
 	property.hpp
 	ptr_traits.hpp
 	throw_ex.hpp

@@ -14,7 +14,9 @@ add_executable(v8pp_test
 	test_module.cpp
 	test_object.cpp
 	test_overload.cpp
+	test_promise.cpp
 	test_property.cpp
+	test_symbol.cpp
 	test_ptr_traits.cpp
 	test_throw_ex.cpp
 	test_type_info.cpp

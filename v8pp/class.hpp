@@ -198,6 +198,184 @@ private:
 
 namespace v8pp {
 
+template<typename T, typename Traits>
+class class_;
+
+namespace detail {
+
+/// Holds begin/end function objects and provides V8 callbacks for the iterator protocol.
+/// Used by class_<T>::iterable() to implement Symbol.iterator.
+template<typename T, typename Traits, typename BeginFn, typename EndFn>
+struct iterator_factory
+{
+	BeginFn begin_fn;
+	EndFn end_fn;
+
+	using begin_result = std::invoke_result_t<BeginFn, T const&>;
+	using end_result = std::invoke_result_t<EndFn, T const&>;
+
+	struct state
+	{
+		begin_result current;
+		end_result end;
+		v8::Global<v8::Object> container_ref; // prevent GC of container during iteration
+	};
+
+	static void iterator_callback(v8::FunctionCallbackInfo<v8::Value> const& args)
+	{
+		v8::Isolate* isolate = args.GetIsolate();
+		v8::HandleScope scope(isolate);
+
+		try
+		{
+			auto self = class_<T, Traits>::unwrap_object(isolate, args.This());
+			if (!self)
+			{
+				args.GetReturnValue().Set(
+					throw_ex(isolate, "calling [Symbol.iterator] on null instance"));
+				return;
+			}
+
+			decltype(auto) factory = external_data::get<iterator_factory>(args.Data());
+
+			auto* iter_state = new state{
+				std::invoke(factory.begin_fn, std::as_const(*self)),
+				std::invoke(factory.end_fn, std::as_const(*self)),
+				v8::Global<v8::Object>(isolate, args.This().As<v8::Object>())
+			};
+
+			v8::Local<v8::Context> context = isolate->GetCurrentContext();
+			v8::Local<v8::Object> iter_obj = v8::Object::New(isolate);
+
+			v8::Local<v8::External> state_ext = v8::External::New(isolate, iter_state);
+			v8::Local<v8::Function> next_fn;
+			if (!v8::Function::New(context, &next_callback, state_ext).ToLocal(&next_fn))
+			{
+				delete iter_state;
+				args.GetReturnValue().Set(throw_ex(isolate, "failed to create iterator next()"));
+				return;
+			}
+
+			iter_obj->Set(context, v8pp::to_v8_name(isolate, "next"), next_fn).FromJust();
+
+			// weak ref to clean up state when iterator object is GC'd
+			auto* weak_data = new weak_ref_data{iter_state, v8::Global<v8::Object>(isolate, iter_obj)};
+			weak_data->handle.SetWeak(weak_data, weak_callback, v8::WeakCallbackType::kParameter);
+
+			args.GetReturnValue().Set(iter_obj);
+		}
+		catch (std::exception const& ex)
+		{
+			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+		}
+	}
+
+	static void next_callback(v8::FunctionCallbackInfo<v8::Value> const& args)
+	{
+		v8::Isolate* isolate = args.GetIsolate();
+		v8::HandleScope scope(isolate);
+
+		try
+		{
+			auto* iter_state = static_cast<state*>(
+				args.Data().As<v8::External>()->Value());
+
+			v8::Local<v8::Context> context = isolate->GetCurrentContext();
+			v8::Local<v8::Object> result = v8::Object::New(isolate);
+
+			if (iter_state->current == iter_state->end)
+			{
+				result->Set(context,
+					v8pp::to_v8_name(isolate, "value"),
+					v8::Undefined(isolate)).FromJust();
+				result->Set(context,
+					v8pp::to_v8_name(isolate, "done"),
+					v8::Boolean::New(isolate, true)).FromJust();
+			}
+			else
+			{
+				result->Set(context,
+					v8pp::to_v8_name(isolate, "value"),
+					v8pp::to_v8(isolate, *iter_state->current)).FromJust();
+				result->Set(context,
+					v8pp::to_v8_name(isolate, "done"),
+					v8::Boolean::New(isolate, false)).FromJust();
+				++iter_state->current;
+			}
+
+			args.GetReturnValue().Set(result);
+		}
+		catch (std::exception const& ex)
+		{
+			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+		}
+	}
+
+	struct weak_ref_data
+	{
+		state* iter_state;
+		v8::Global<v8::Object> handle;
+	};
+
+	static void weak_callback(v8::WeakCallbackInfo<weak_ref_data> const& info)
+	{
+		auto* ref = info.GetParameter();
+		delete ref->iter_state;
+		ref->handle.Reset();
+		delete ref;
+	}
+};
+
+/// Wraps a non-member callable for Symbol.toPrimitive, unwrapping `this` from args.This().
+/// The callable signature: ReturnType(T const&, std::string_view hint)
+template<typename T, typename Traits, typename Function>
+struct to_primitive_invoker
+{
+	Function func;
+
+	static void callback(v8::FunctionCallbackInfo<v8::Value> const& args)
+	{
+		v8::Isolate* isolate = args.GetIsolate();
+		v8::HandleScope scope(isolate);
+
+		try
+		{
+			auto self = class_<T, Traits>::unwrap_object(isolate, args.This());
+			if (!self)
+			{
+				args.GetReturnValue().Set(
+					throw_ex(isolate, "calling [Symbol.toPrimitive] on null instance"));
+				return;
+			}
+
+			decltype(auto) invoker = external_data::get<to_primitive_invoker>(args.Data());
+
+			std::string hint;
+			if (args.Length() > 0)
+			{
+				hint = from_v8<std::string>(isolate, args[0]);
+			}
+
+			using return_type = typename function_traits<Function>::return_type;
+			if constexpr (std::same_as<return_type, void>)
+			{
+				std::invoke(invoker.func, std::as_const(*self), std::string_view(hint));
+			}
+			else
+			{
+				args.GetReturnValue().Set(
+					to_v8(isolate, std::invoke(invoker.func, std::as_const(*self), std::string_view(hint))));
+			}
+		}
+		catch (std::exception const& ex)
+		{
+			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+		}
+	}
+};
+
+} // namespace detail
+
 /// Interface to access C++ classes bound to V8
 template<typename T, typename Traits = raw_ptr_traits>
 class class_
@@ -502,6 +680,80 @@ public:
 
 		class_info_.js_function_template()->PrototypeTemplate()->Set(v8pp::to_v8_name(isolate(), name), to_v8(isolate(), value),
 			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
+		return *this;
+	}
+
+	/// Set Symbol.toStringTag on prototype for custom [object Tag] output
+	class_& to_string_tag(std::string_view tag)
+	{
+		v8::Isolate* iso = isolate();
+		v8::HandleScope scope(iso);
+
+		class_info_.js_function_template()->PrototypeTemplate()->Set(
+			v8::Symbol::GetToStringTag(iso), v8pp::to_v8(iso, tag),
+			v8::PropertyAttribute(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
+		return *this;
+	}
+
+	/// Set Symbol.toPrimitive on prototype for custom type coercion
+	/// func signature: ReturnType(std::string_view hint) as member, or
+	///                 ReturnType(T const&, std::string_view hint) as free function/lambda
+	template<typename Function>
+	class_& to_primitive(Function&& func)
+	{
+		constexpr bool is_mem_fun = std::is_member_function_pointer_v<Function>;
+
+		static_assert(is_mem_fun || detail::is_callable<Function>::value,
+			"Function must be pointer to member function or callable object");
+
+		v8::Isolate* iso = isolate();
+		v8::HandleScope scope(iso);
+
+		v8::Local<v8::Data> wrapped_fun;
+		if constexpr (is_mem_fun)
+		{
+			using mem_func_type = typename detail::function_traits<Function>::template pointer_type<T>;
+			wrapped_fun = wrap_function_template<mem_func_type, Traits>(iso,
+				mem_func_type(std::forward<Function>(func)),
+				v8::SideEffectType::kHasNoSideEffect);
+		}
+		else
+		{
+			using Invoker = detail::to_primitive_invoker<T, Traits, std::decay_t<Function>>;
+			v8::Local<v8::Value> data = detail::external_data::set(iso,
+				Invoker{std::decay_t<Function>(std::forward<Function>(func))});
+			wrapped_fun = v8::FunctionTemplate::New(iso, &Invoker::callback, data,
+				v8::Local<v8::Signature>(), 0, v8::ConstructorBehavior::kThrow,
+				v8::SideEffectType::kHasNoSideEffect);
+		}
+
+		class_info_.js_function_template()->PrototypeTemplate()->Set(
+			v8::Symbol::GetToPrimitive(iso), wrapped_fun,
+			v8::PropertyAttribute(v8::DontEnum | v8::DontDelete));
+		return *this;
+	}
+
+	/// Make this class iterable in JavaScript (for...of, spread, Array.from, etc.)
+	/// begin_fn and end_fn: member functions or callables taking T const& and returning iterators
+	template<typename BeginFn, typename EndFn>
+	class_& iterable(BeginFn&& begin_fn, EndFn&& end_fn)
+	{
+		v8::Isolate* iso = isolate();
+		v8::HandleScope scope(iso);
+
+		using Factory = detail::iterator_factory<T, Traits,
+			std::decay_t<BeginFn>, std::decay_t<EndFn>>;
+
+		v8::Local<v8::Value> data = detail::external_data::set(iso,
+			Factory{std::decay_t<BeginFn>(std::forward<BeginFn>(begin_fn)),
+			        std::decay_t<EndFn>(std::forward<EndFn>(end_fn))});
+
+		v8::Local<v8::FunctionTemplate> iter_tmpl = v8::FunctionTemplate::New(iso,
+			&Factory::iterator_callback, data);
+
+		class_info_.js_function_template()->PrototypeTemplate()->Set(
+			v8::Symbol::GetIterator(iso), iter_tmpl,
+			v8::PropertyAttribute(v8::DontEnum | v8::DontDelete));
 		return *this;
 	}
 
