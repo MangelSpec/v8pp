@@ -70,55 +70,46 @@ struct is_string<wchar_t const*> : std::true_type
 //
 // is_mapping<T>
 //
-template<typename T, typename U = void>
-struct is_mapping_impl : std::false_type
-{
+template<typename T>
+concept mapping = requires(T t) {
+	typename T::key_type;
+	typename T::mapped_type;
+	t.begin();
+	t.end();
 };
 
 template<typename T>
-struct is_mapping_impl<T, std::void_t<typename T::key_type, typename T::mapped_type,
-	decltype(std::declval<T>().begin()), decltype(std::declval<T>().end())>> : std::true_type
+struct is_mapping : std::bool_constant<mapping<T>>
 {
 };
-
-template<typename T>
-using is_mapping = is_mapping_impl<T>;
 
 /////////////////////////////////////////////////////////////////////////////
 //
 // is_sequence<T>
 //
-template<typename T, typename U = void>
-struct is_sequence_impl : std::false_type
-{
+template<typename T>
+concept sequence = !is_string<T>::value && requires(T t, typename T::value_type v) {
+	t.begin();
+	t.end();
+	t.emplace_back(std::move(v));
 };
 
 template<typename T>
-struct is_sequence_impl<T, std::void_t<typename T::value_type,
-	decltype(std::declval<T>().begin()), decltype(std::declval<T>().end()),
-	decltype(std::declval<T>().emplace_back(std::declval<typename T::value_type>()))>> : std::negation<is_string<T>>
+struct is_sequence : std::bool_constant<sequence<T>>
 {
 };
-
-template<typename T>
-using is_sequence = is_sequence_impl<T>;
 
 /////////////////////////////////////////////////////////////////////////////
 //
 // has_reserve<T>
 //
-template<typename T, typename U = void>
-struct has_reserve_impl : std::false_type
-{
-};
+template<typename T>
+concept reservable = requires(T t) { t.reserve(size_t{}); };
 
 template<typename T>
-struct has_reserve_impl<T, std::void_t<decltype(std::declval<T>().reserve(0))>> : std::true_type
+struct has_reserve : std::bool_constant<reservable<T>>
 {
 };
-
-template<typename T>
-using has_reserve = has_reserve_impl<T>;
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -316,36 +307,11 @@ struct function_traits<F&&> : function_traits<F>
 {
 };
 
-template<typename F, bool is_class>
-struct is_callable_impl
-	: std::is_function<typename std::remove_pointer<F>::type>
-{
-};
+template<typename F>
+concept callable = std::is_function_v<std::remove_pointer_t<F>>
+	|| requires { &F::operator(); };
 
 template<typename F>
-struct is_callable_impl<F, true>
-{
-private:
-	struct fallback { void operator()(); };
-	struct derived : F, fallback {};
-
-	template<typename U, U>
-	struct check;
-
-	template<typename>
-	static std::true_type test(...);
-
-	template<typename C>
-	static std::false_type test(check<void (fallback::*)(), &C::operator()>*);
-
-	using type = decltype(test<derived>(0));
-
-public:
-	static constexpr bool value = type::value;
-};
-
-template<typename F>
-using is_callable = std::integral_constant<bool,
-	is_callable_impl<F, std::is_class<F>::value>::value>;
+using is_callable = std::bool_constant<callable<F>>;
 
 } // namespace v8pp::detail

@@ -3,6 +3,7 @@
 #include <v8.h>
 
 #include <algorithm>
+#include <concepts>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -50,7 +51,8 @@ struct runtime_error : std::runtime_error
 
 // converter specializations for string types
 template<typename String>
-struct convert<String, typename std::enable_if<detail::is_string<String>::value>::type>
+	requires detail::is_string<String>::value
+struct convert<String, void>
 {
 	using Char = typename String::value_type;
 	using Traits = typename String::traits_type;
@@ -252,8 +254,8 @@ struct convert<bool>
 	}
 };
 
-template<typename T>
-struct convert<T, typename std::enable_if<std::is_integral<T>::value>::type>
+template<std::integral T>
+struct convert<T, void>
 {
 	using from_type = T;
 	using to_type = v8::Local<v8::Number>;
@@ -314,7 +316,8 @@ struct convert<T, typename std::enable_if<std::is_integral<T>::value>::type>
 };
 
 template<typename T>
-struct convert<T, typename std::enable_if<std::is_enum<T>::value>::type>
+	requires std::is_enum_v<T>
+struct convert<T, void>
 {
 	using underlying_type = typename std::underlying_type<T>::type;
 
@@ -344,8 +347,8 @@ struct convert<T, typename std::enable_if<std::is_enum<T>::value>::type>
 	}
 };
 
-template<typename T>
-struct convert<T, typename std::enable_if<std::is_floating_point<T>::value>::type>
+template<std::floating_point T>
+struct convert<T, void>
 {
 	using from_type = T;
 	using to_type = v8::Local<v8::Number>;
@@ -674,7 +677,8 @@ private:
 
 // convert Array <-> std::array, vector, deque, list
 template<typename Sequence>
-struct convert<Sequence, typename std::enable_if<detail::is_sequence<Sequence>::value || detail::is_array<Sequence>::value>::type>
+	requires (detail::sequence<Sequence> || detail::is_array<Sequence>::value)
+struct convert<Sequence, void>
 {
 	using from_type = Sequence;
 	using to_type = v8::Local<v8::Array>;
@@ -755,8 +759,8 @@ struct convert<Sequence, typename std::enable_if<detail::is_sequence<Sequence>::
 };
 
 // convert Object <-> std::{unordered_}{multi}map
-template<typename Mapping>
-struct convert<Mapping, typename std::enable_if<detail::is_mapping<Mapping>::value>::type>
+template<detail::mapping Mapping>
+struct convert<Mapping, void>
 {
 	using from_type = Mapping;
 	using to_type = v8::Local<v8::Object>;
@@ -873,7 +877,8 @@ struct is_wrapped_class<std::variant<Ts...>> : std::false_type
 };
 
 template<typename T>
-struct convert<T*, typename std::enable_if<is_wrapped_class<T>::value>::type>
+	requires is_wrapped_class<T>::value
+struct convert<T*, void>
 {
 	using from_type = T*;
 	using to_type = v8::Local<v8::Object>;
@@ -907,7 +912,8 @@ struct convert<T*, typename std::enable_if<is_wrapped_class<T>::value>::type>
 };
 
 template<typename T>
-struct convert<T, typename std::enable_if<is_wrapped_class<T>::value>::type>
+	requires is_wrapped_class<T>::value
+struct convert<T, void>
 {
 	using from_type = T&;
 	using to_type = v8::Local<v8::Object>;
@@ -948,7 +954,8 @@ struct convert<T, typename std::enable_if<is_wrapped_class<T>::value>::type>
 };
 
 template<typename T>
-struct convert<std::shared_ptr<T>, typename std::enable_if<is_wrapped_class<T>::value>::type>
+	requires is_wrapped_class<T>::value
+struct convert<std::shared_ptr<T>, void>
 {
 	using from_type = std::shared_ptr<T>;
 	using to_type = v8::Local<v8::Object>;
