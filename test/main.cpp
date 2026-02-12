@@ -32,6 +32,9 @@ void run_tests()
 	void test_fast_api();
 	void test_symbol();
 	void test_promise();
+	void test_gc_stress();
+	void test_adversarial();
+	void test_thread_safety();
 
 	std::pair<char const*, void (*)()> tests[] =
 	{
@@ -54,6 +57,9 @@ void run_tests()
 		{"test_fast_api", test_fast_api},
 		{"test_symbol", test_symbol},
 		{"test_promise", test_promise},
+		{"test_gc_stress", test_gc_stress},
+		{"test_adversarial", test_adversarial},
+		{"test_thread_safety", test_thread_safety},
 	};
 
 	for (auto const& test : tests)

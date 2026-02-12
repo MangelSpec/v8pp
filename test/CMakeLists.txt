@@ -3,6 +3,7 @@
 add_executable(v8pp_test
 	main.cpp
 	test.hpp
+	test_adversarial.cpp
 	test_call_from_v8.cpp
 	test_call_v8.cpp
 	test_class.cpp
@@ -11,6 +12,7 @@ add_executable(v8pp_test
 	test_convert.cpp
 	test_fast_api.cpp
 	test_function.cpp
+	test_gc_stress.cpp
 	test_json.cpp
 	test_module.cpp
 	test_object.cpp
@@ -18,6 +20,7 @@ add_executable(v8pp_test
 	test_promise.cpp
 	test_property.cpp
 	test_symbol.cpp
+	test_thread_safety.cpp
 	test_ptr_traits.cpp
 	test_throw_ex.cpp
 	test_type_info.cpp

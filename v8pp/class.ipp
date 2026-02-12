@@ -52,6 +52,11 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 		[](v8::FunctionCallbackInfo<v8::Value> const& args)
 		{
 			v8::Isolate* isolate = args.GetIsolate();
+			if (!args.IsConstructCall())
+			{
+				args.GetReturnValue().Set(throw_ex(isolate, "must be called with new"));
+				return;
+			}
 			object_registry* this_ = external_data::get<object_registry*>(args.Data());
 			try
 			{
