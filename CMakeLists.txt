@@ -6,7 +6,7 @@ if(POLICY CMP0091)
 endif()
 
 project(v8pp
-	VERSION 2.1.1
+	VERSION 3.0.0
 	DESCRIPTION "Bind C++ functions and classes into V8 JavaScript engine"
 	HOMEPAGE_URL https://github.com/pmed/v8pp
 	LANGUAGES CXX
