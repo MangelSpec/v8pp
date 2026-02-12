@@ -71,6 +71,20 @@ jobs:
     - name: Build
       run: cmake --build ${{github.workspace}}/build --config ${{matrix.build_type}}
 
+    - name: Debug DLL layout
+      if: startsWith(matrix.os, 'windows')
+      working-directory: ${{github.workspace}}/build
+      shell: cmd
+      run: |
+        echo === EXE location ===
+        dir /b *.exe 2>nul
+        echo === DLLs in build dir ===
+        dir /b *.dll 2>nul
+        echo === V8 DLL check ===
+        where /r . v8.dll 2>nul
+        echo === Test exe dependencies ===
+        dumpbin /dependents v8pp_test.exe 2>nul | findstr /i ".dll"
+
     - name: Test
       working-directory: ${{github.workspace}}/build
       run: ctest -C ${{matrix.build_type}} -V

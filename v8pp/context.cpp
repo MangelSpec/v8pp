@@ -7,6 +7,7 @@
 #include "v8pp/throw_ex.hpp"
 
 #include <fstream>
+#include <mutex>
 #include <unordered_set>
 #include <utility>
 
@@ -21,6 +22,12 @@ static char const path_sep = '/';
 #endif
 
 namespace v8pp {
+
+static std::mutex& alive_contexts_mutex()
+{
+	static std::mutex mtx;
+	return mtx;
+}
 
 static std::unordered_set<context*>& alive_contexts()
 {
@@ -49,9 +56,12 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 		}
 
 		context* ctx = detail::external_data::get<context*>(args.Data());
-		if (alive_contexts().find(ctx) == alive_contexts().end())
 		{
-			throw std::runtime_error("require() called on destroyed context");
+			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+			if (alive_contexts().find(ctx) == alive_contexts().end())
+			{
+				throw std::runtime_error("require() called on destroyed context");
+			}
 		}
 
 		// check if module is already loaded
@@ -131,9 +141,12 @@ void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
 		}
 
 		context* ctx = detail::external_data::get<context*>(args.Data());
-		if (alive_contexts().find(ctx) == alive_contexts().end())
 		{
-			throw std::runtime_error("run() called on destroyed context");
+			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+			if (alive_contexts().find(ctx) == alive_contexts().end())
+			{
+				throw std::runtime_error("run() called on destroyed context");
+			}
 		}
 		result = to_v8(isolate, ctx->run_file(filename));
 	}
@@ -192,7 +205,10 @@ context::context(v8::Isolate* isolate, v8::ArrayBuffer::Allocator* allocator,
 	}
 	impl_.Reset(isolate_, impl);
 
-	alive_contexts().insert(this);
+	{
+		std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+		alive_contexts().insert(this);
+	}
 }
 
 context::context(context&& src) noexcept
@@ -204,6 +220,7 @@ context::context(context&& src) noexcept
 	, modules_(std::move(src.modules_))
 	, lib_path_(std::move(src.lib_path_))
 {
+	std::lock_guard<std::mutex> lock(alive_contexts_mutex());
 	alive_contexts().erase(&src);
 	alive_contexts().insert(this);
 }
@@ -221,8 +238,11 @@ context& context::operator=(context&& src) noexcept
 		impl_ = std::move(src.impl_);
 		modules_ = std::move(src.modules_);
 		lib_path_ = std::move(src.lib_path_);
-		alive_contexts().erase(&src);
-		alive_contexts().insert(this);
+		{
+			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+			alive_contexts().erase(&src);
+			alive_contexts().insert(this);
+		}
 	}
 	return *this;
 }
@@ -240,7 +260,10 @@ void context::destroy()
 		return;
 	}
 
-	alive_contexts().erase(this);
+	{
+		std::lock_guard<std::mutex> lock(alive_contexts_mutex());
+		alive_contexts().erase(this);
+	}
 
 	// remove all class singletons and external data before modules unload
 	cleanup(isolate_);
