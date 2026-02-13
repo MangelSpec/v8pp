@@ -733,7 +733,7 @@ public:
 			isolate(), fast_function<GetPtr>{},
 			v8::SideEffectType::kHasNoSideEffect);
 
-		class_info_.js_function_template()->InstanceTemplate()->SetAccessorProperty(
+		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
 			v8_name, getter_template,
 			v8::Local<v8::FunctionTemplate>(),
 			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
@@ -755,7 +755,7 @@ public:
 			isolate(), fast_function<SetPtr>{},
 			v8::SideEffectType::kHasSideEffectToReceiver);
 
-		class_info_.js_function_template()->InstanceTemplate()->SetAccessorProperty(
+		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
 			v8_name, getter_template, setter_template,
 			v8::PropertyAttribute(v8::DontDelete));
 
