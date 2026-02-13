@@ -178,6 +178,33 @@ public:
 		return *this;
 	}
 
+	/// Set read/write module property with V8 Fast API getter and slow setter
+	template<auto GetPtr, typename SetFunction>
+	requires(!is_fast_function<std::decay_t<SetFunction>>::value)
+	module& property(char const* name, fast_function<GetPtr>, SetFunction&& set)
+	{
+		using Setter = std::decay_t<SetFunction>;
+		static_assert(detail::is_callable<Setter>::value, "SetFunction must be callable");
+
+		v8::HandleScope scope(isolate_);
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
+		auto getter_template = wrap_function_template<GetPtr>(
+			isolate_, fast_function<GetPtr>{},
+			v8::SideEffectType::kHasNoSideEffect);
+		auto setter_template = v8::FunctionTemplate::New(isolate_,
+			&detail::forward_function<raw_ptr_traits, Setter>,
+			detail::external_data::set(isolate_, Setter(std::forward<SetFunction>(set))),
+			v8::Local<v8::Signature>(), 0,
+			v8::ConstructorBehavior::kThrow,
+			v8::SideEffectType::kHasSideEffectToReceiver);
+
+		obj_->SetAccessorProperty(v8_name, getter_template, setter_template,
+			v8::PropertyAttribute(v8::DontDelete));
+
+		return *this;
+	}
+
 	/// Set read/write module property with V8 Fast API getter and setter
 	template<auto GetPtr, auto SetPtr>
 	module& property(char const* name, fast_function<GetPtr>, fast_function<SetPtr>)

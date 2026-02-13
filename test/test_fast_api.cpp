@@ -158,6 +158,28 @@ void test_fast_api()
 			run_script<int>(context, "p.fast_xy = 77; p.x"), 77);
 	}
 
+	// --- Class property with fast getter + slow setter ---
+	{
+		struct Gauge
+		{
+			int32_t val = 0;
+			int32_t get_val() const { return val; }
+			void set_val(v8::Isolate*, int32_t v) { val = v; }
+		};
+
+		v8pp::class_<Gauge> gauge_class(isolate);
+		gauge_class
+			.ctor<>()
+			.property("mixed", v8pp::fast_fn<&Gauge::get_val>, &Gauge::set_val);
+		context.class_("Gauge", gauge_class);
+
+		check_eq("fast_api: mixed property get",
+			run_script<int>(context, "var g = new Gauge(); g.mixed"), 0);
+
+		check_eq("fast_api: mixed property set+get",
+			run_script<int>(context, "g.mixed = 42; g.mixed"), 42);
+	}
+
 	// --- Module property with fast API ---
 	{
 		static int32_t mod_value = 0;
@@ -187,5 +209,25 @@ void test_fast_api()
 		// Read-only should not be writable
 		check_eq("fast_api: module read-only property is readonly",
 			run_script<int>(context, "fmod.fast_const = 999; fmod.fast_const"), 123);
+	}
+
+	// --- Module property with fast getter + slow setter ---
+	{
+		static int32_t mixed_val = 0;
+
+		struct MixedMod
+		{
+			static int32_t get_val() { return mixed_val; }
+			static void set_val(int32_t v) { mixed_val = v; }
+		};
+
+		v8pp::module m(isolate);
+		m.property("mixed", v8pp::fast_fn<&MixedMod::get_val>, &MixedMod::set_val);
+		context.module("mmod", m);
+
+		mixed_val = 0;
+		check_eq("fast_api: module mixed property set+get",
+			run_script<int>(context, "mmod.mixed = 33; mmod.mixed"), 33);
+		check_eq("fast_api: module mixed property updated C++ side", mixed_val, 33);
 	}
 }
