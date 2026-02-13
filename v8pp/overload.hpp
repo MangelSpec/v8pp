@@ -206,6 +206,29 @@ bool try_invoke_entry(overload_entry<F, defaults<Defs...>> const& entry,
 	return true;
 }
 
+/// Call a constructor factory entry (no defaults), returning the constructed object.
+/// Factory must be a free function or callable, not a member function pointer.
+template<typename Traits, typename F>
+auto call_ctor_entry(overload_entry<F, void> const& entry,
+	v8::FunctionCallbackInfo<v8::Value> const& args)
+{
+	static_assert(!std::is_member_function_pointer_v<F>,
+		"Constructor factory must be a free function or callable, not a member function pointer");
+	F func = entry.func;
+	return call_from_v8<Traits>(std::move(func), args);
+}
+
+/// Call a constructor factory entry (with defaults), returning the constructed object.
+template<typename Traits, typename F, typename... Defs>
+auto call_ctor_entry(overload_entry<F, defaults<Defs...>> const& entry,
+	v8::FunctionCallbackInfo<v8::Value> const& args)
+{
+	static_assert(!std::is_member_function_pointer_v<F>,
+		"Constructor factory must be a free function or callable, not a member function pointer");
+	F func = entry.func;
+	return call_from_v8<Traits>(std::move(func), args, entry.defs);
+}
+
 /// Get the function type from an overload_entry
 template<typename Entry>
 struct entry_func_type;

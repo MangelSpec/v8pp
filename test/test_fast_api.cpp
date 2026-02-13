@@ -102,4 +102,73 @@ void test_fast_api()
 	// --- Lambda as fast_fn is not supported (lambdas can't be NTTPs) ---
 	// This is by design: fast_fn requires a function pointer known at compile time.
 	// Use regular .function() for lambdas.
+
+	// --- Class property with fast API getter (read-only) ---
+	{
+		struct Point
+		{
+			int32_t x = 0;
+			int32_t y = 0;
+			int32_t get_x() const { return x; }
+			int32_t get_y() const { return y; }
+			void set_x(int32_t v) { x = v; }
+			void set_y(int32_t v) { y = v; }
+		};
+
+		v8pp::class_<Point> point_class(isolate);
+		point_class
+			.ctor<>()
+			.var("x", &Point::x)
+			.var("y", &Point::y)
+			.property("fast_x", v8pp::fast_fn<&Point::get_x>)
+			.property("fast_xy", v8pp::fast_fn<&Point::get_x>, v8pp::fast_fn<&Point::set_x>)
+			;
+		context.class_("Point", point_class);
+
+		// Read-only fast property
+		check_eq("fast_api: class read-only property",
+			run_script<int>(context, "var p = new Point(); p.x = 42; p.fast_x"), 42);
+
+		// Read-only should not be writable
+		check_eq("fast_api: class read-only property is readonly",
+			run_script<int>(context, "p.fast_x = 999; p.fast_x"), 42);
+
+		// Read-write fast property
+		check_eq("fast_api: class read-write property get",
+			run_script<int>(context, "p = new Point(); p.x = 10; p.fast_xy"), 10);
+
+		check_eq("fast_api: class read-write property set",
+			run_script<int>(context, "p.fast_xy = 77; p.x"), 77);
+	}
+
+	// --- Module property with fast API ---
+	{
+		static int32_t mod_value = 0;
+
+		struct ModState
+		{
+			static int32_t get_val() { return mod_value; }
+			static void set_val(int32_t v) { mod_value = v; }
+			static int32_t get_const() { return 123; }
+		};
+
+		v8pp::module m(isolate);
+		m.property("fast_val", v8pp::fast_fn<&ModState::get_val>, v8pp::fast_fn<&ModState::set_val>);
+		m.property("fast_const", v8pp::fast_fn<&ModState::get_const>);
+		context.module("fmod", m);
+
+		// Read-write module property
+		mod_value = 0;
+		check_eq("fast_api: module read-write property set+get",
+			run_script<int>(context, "fmod.fast_val = 55; fmod.fast_val"), 55);
+		check_eq("fast_api: module property updated C++ side", mod_value, 55);
+
+		// Read-only module property
+		check_eq("fast_api: module read-only property",
+			run_script<int>(context, "fmod.fast_const"), 123);
+
+		// Read-only should not be writable
+		check_eq("fast_api: module read-only property is readonly",
+			run_script<int>(context, "fmod.fast_const = 999; fmod.fast_const"), 123);
+	}
 }

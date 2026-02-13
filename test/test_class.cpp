@@ -539,6 +539,181 @@ void test_auto_wrap_objects()
 	check_eq("return X object", run_script<int>(context, "obj = f(123); obj.x"), 123);
 }
 
+template<typename Traits>
+void test_ctor_factory_defaults()
+{
+	struct Widget
+	{
+		int width;
+		int height;
+		std::string label;
+
+		Widget(int w, int h, std::string l)
+			: width(w), height(h), label(std::move(l)) {}
+	};
+
+	v8pp::context context;
+	v8::Isolate* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+
+	// Factory function that returns the right pointer type
+	auto make_widget = [](int w, int h, std::string label)
+		-> typename Traits::template object_pointer_type<Widget>
+	{
+		return Traits::template create<Widget>(w, h, std::move(label));
+	};
+
+	v8pp::class_<Widget, Traits> widget_class(isolate);
+	widget_class
+		.ctor(make_widget, v8pp::defaults(100, 200, std::string("untitled")))
+		.var("width", &Widget::width)
+		.var("height", &Widget::height)
+		.var("label", &Widget::label)
+		;
+
+	context.class_("Widget", widget_class);
+
+	// All defaults
+	check_eq("ctor factory+defaults: 0 args width",
+		run_script<int>(context, "w = new Widget(); w.width"), 100);
+	check_eq("ctor factory+defaults: 0 args height",
+		run_script<int>(context, "w.height"), 200);
+	check_eq("ctor factory+defaults: 0 args label",
+		run_script<std::string>(context, "w.label"), "untitled");
+
+	// Partial defaults
+	check_eq("ctor factory+defaults: 1 arg",
+		run_script<int>(context, "w = new Widget(50); w.width"), 50);
+	check_eq("ctor factory+defaults: 1 arg height default",
+		run_script<int>(context, "w.height"), 200);
+
+	// Two args
+	check_eq("ctor factory+defaults: 2 args",
+		run_script<int>(context, "w = new Widget(10, 20); w.width + w.height"), 30);
+	check_eq("ctor factory+defaults: 2 args label default",
+		run_script<std::string>(context, "w.label"), "untitled");
+
+	// All args
+	check_eq("ctor factory+defaults: all args",
+		run_script<std::string>(context, "w = new Widget(1, 2, 'hello'); w.label"), "hello");
+}
+
+template<typename Traits>
+void test_ctor_multi_dispatch()
+{
+	struct Shape
+	{
+		int kind; // 0 = default, 1 = from radius, 2 = from w,h
+		int a, b;
+
+		Shape() : kind(0), a(0), b(0) {}
+		Shape(int radius) : kind(1), a(radius), b(radius) {}
+		Shape(int w, int h) : kind(2), a(w), b(h) {}
+	};
+
+	v8pp::context context;
+	v8::Isolate* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+
+	auto make_default = []() -> typename Traits::template object_pointer_type<Shape>
+	{
+		return Traits::template create<Shape>();
+	};
+
+	auto make_circle = [](int radius) -> typename Traits::template object_pointer_type<Shape>
+	{
+		return Traits::template create<Shape>(radius);
+	};
+
+	auto make_rect = [](int w, int h) -> typename Traits::template object_pointer_type<Shape>
+	{
+		return Traits::template create<Shape>(w, h);
+	};
+
+	v8pp::class_<Shape, Traits> shape_class(isolate);
+	shape_class
+		.ctor(make_default, make_circle, make_rect)
+		.var("kind", &Shape::kind)
+		.var("a", &Shape::a)
+		.var("b", &Shape::b)
+		;
+
+	context.class_("Shape", shape_class);
+
+	// 0 args → make_default
+	check_eq("ctor multi-dispatch: 0 args",
+		run_script<int>(context, "s = new Shape(); s.kind"), 0);
+
+	// 1 arg → make_circle
+	check_eq("ctor multi-dispatch: 1 arg kind",
+		run_script<int>(context, "s = new Shape(5); s.kind"), 1);
+	check_eq("ctor multi-dispatch: 1 arg radius",
+		run_script<int>(context, "s.a"), 5);
+
+	// 2 args → make_rect
+	check_eq("ctor multi-dispatch: 2 args kind",
+		run_script<int>(context, "s = new Shape(10, 20); s.kind"), 2);
+	check_eq("ctor multi-dispatch: 2 args w+h",
+		run_script<int>(context, "s.a + s.b"), 30);
+
+	// No match → error
+	check_eq("ctor multi-dispatch: no match",
+		run_script<std::string>(context,
+			"try { new Shape(1,2,3); 'no error'; } catch(e) { 'caught'; }"),
+		"caught");
+}
+
+template<typename Traits>
+void test_ctor_multi_dispatch_with_defaults()
+{
+	struct Config
+	{
+		int mode;
+		std::string name;
+
+		Config() : mode(0), name("default") {}
+		Config(int m, std::string n) : mode(m), name(std::move(n)) {}
+	};
+
+	v8pp::context context;
+	v8::Isolate* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+
+	auto make_default = []() -> typename Traits::template object_pointer_type<Config>
+	{
+		return Traits::template create<Config>();
+	};
+
+	auto make_full = [](int m, std::string n) -> typename Traits::template object_pointer_type<Config>
+	{
+		return Traits::template create<Config>(m, std::move(n));
+	};
+
+	v8pp::class_<Config, Traits> config_class(isolate);
+	config_class
+		.ctor(make_default,
+			v8pp::with_defaults(make_full, v8pp::defaults(42, std::string("auto"))))
+		.var("mode", &Config::mode)
+		.var("name", &Config::name)
+		;
+
+	context.class_("Config", config_class);
+
+	// 0 args → make_default (exact match wins over make_full with all defaults)
+	check_eq("ctor multi+defaults: 0 args",
+		run_script<int>(context, "c = new Config(); c.mode"), 0);
+
+	// 1 arg → make_full with 1 default
+	check_eq("ctor multi+defaults: 1 arg mode",
+		run_script<int>(context, "c = new Config(7); c.mode"), 7);
+	check_eq("ctor multi+defaults: 1 arg name default",
+		run_script<std::string>(context, "c.name"), "auto");
+
+	// 2 args → make_full with no defaults
+	check_eq("ctor multi+defaults: 2 args",
+		run_script<std::string>(context, "c = new Config(99, 'custom'); c.name"), "custom");
+}
+
 void test_class()
 {
 	test_class_<v8pp::raw_ptr_traits>();
@@ -552,4 +727,13 @@ void test_class()
 
 	test_auto_wrap_objects<v8pp::raw_ptr_traits>();
 	test_auto_wrap_objects<v8pp::shared_ptr_traits>();
+
+	test_ctor_factory_defaults<v8pp::raw_ptr_traits>();
+	test_ctor_factory_defaults<v8pp::shared_ptr_traits>();
+
+	test_ctor_multi_dispatch<v8pp::raw_ptr_traits>();
+	test_ctor_multi_dispatch<v8pp::shared_ptr_traits>();
+
+	test_ctor_multi_dispatch_with_defaults<v8pp::raw_ptr_traits>();
+	test_ctor_multi_dispatch_with_defaults<v8pp::shared_ptr_traits>();
 }

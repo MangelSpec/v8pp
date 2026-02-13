@@ -133,6 +133,7 @@ public:
 
 	/// Set property in the module with specified name and get/set functions
 	template<typename GetFunction, typename SetFunction = detail::none>
+		requires (!is_fast_function<std::decay_t<GetFunction>>::value)
 	module& property(char const* name, GetFunction&& get, SetFunction&& set = {})
 	{
 		using Getter = typename std::decay_t<GetFunction>;
@@ -164,6 +165,44 @@ public:
 			v8::PropertyAttribute::DontDelete, v8::DEFAULT,
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #endif
+		return *this;
+	}
+
+	/// Set read-only module property with V8 Fast API getter
+	template<auto GetPtr>
+	module& property(char const* name, fast_function<GetPtr>)
+	{
+		v8::HandleScope scope(isolate_);
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
+		auto getter_template = wrap_function_template<GetPtr>(
+			isolate_, fast_function<GetPtr>{},
+			v8::SideEffectType::kHasNoSideEffect);
+
+		obj_->SetAccessorProperty(v8_name, getter_template,
+			v8::Local<v8::FunctionTemplate>(),
+			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
+
+		return *this;
+	}
+
+	/// Set read/write module property with V8 Fast API getter and setter
+	template<auto GetPtr, auto SetPtr>
+	module& property(char const* name, fast_function<GetPtr>, fast_function<SetPtr>)
+	{
+		v8::HandleScope scope(isolate_);
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
+		auto getter_template = wrap_function_template<GetPtr>(
+			isolate_, fast_function<GetPtr>{},
+			v8::SideEffectType::kHasNoSideEffect);
+		auto setter_template = wrap_function_template<SetPtr>(
+			isolate_, fast_function<SetPtr>{},
+			v8::SideEffectType::kHasSideEffectToReceiver);
+
+		obj_->SetAccessorProperty(v8_name, getter_template, setter_template,
+			v8::PropertyAttribute(v8::DontDelete));
+
 		return *this;
 	}
 

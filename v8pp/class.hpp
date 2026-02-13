@@ -468,6 +468,102 @@ public:
 		return *this;
 	}
 
+	/// Set class constructor from a factory function with default parameter values.
+	/// The factory must return object_pointer_type (T* for raw_ptr_traits, shared_ptr<T> for shared_ptr_traits).
+	template<typename Function, typename... Defs>
+		requires (detail::is_callable<std::decay_t<Function>>::value
+			&& !v8pp::is_defaults<std::decay_t<Function>>::value)
+	class_& ctor(Function&& func, v8pp::defaults<Defs...> defs)
+	{
+		using F = std::decay_t<Function>;
+		static_assert(std::is_convertible_v<typename detail::function_traits<F>::return_type, object_pointer_type>,
+			"Constructor factory must return object_pointer_type");
+
+		class_info_.set_ctor(
+			[func = F(std::forward<Function>(func)), defs = std::move(defs)]
+			(v8::FunctionCallbackInfo<v8::Value> const& args)
+			{
+				F f = func; // copy from captured const
+				auto object = detail::call_from_v8<Traits>(std::move(f), args, defs);
+				return std::make_pair(pointer_type(object), Traits::object_size(object));
+			});
+		return *this;
+	}
+
+	/// Set class constructor with multiple overloaded factory functions (multi-dispatch).
+	/// Each factory must return object_pointer_type. Dispatched by arity + type matching (first-match-wins).
+	/// Accepts plain callables and v8pp::with_defaults() entries.
+	template<typename F1, typename F2, typename... Fs>
+		requires ((detail::is_callable<std::decay_t<F1>>::value || is_overload_entry<std::decay_t<F1>>::value)
+			&& (detail::is_callable<std::decay_t<F2>>::value || is_overload_entry<std::decay_t<F2>>::value)
+			&& !std::is_member_function_pointer_v<std::decay_t<F1>>
+			&& !std::is_member_function_pointer_v<std::decay_t<F2>>)
+	class_& ctor(F1&& f1, F2&& f2, Fs&&... fs)
+	{
+		using Set = detail::overload_set<
+			decltype(detail::make_overload_entry(std::forward<F1>(f1))),
+			decltype(detail::make_overload_entry(std::forward<F2>(f2))),
+			decltype(detail::make_overload_entry(std::forward<Fs>(fs)))...>;
+
+		class_info_.set_ctor(
+			[set = Set{std::make_tuple(
+				detail::make_overload_entry(std::forward<F1>(f1)),
+				detail::make_overload_entry(std::forward<F2>(f2)),
+				detail::make_overload_entry(std::forward<Fs>(fs))...)}]
+			(v8::FunctionCallbackInfo<v8::Value> const& args)
+			{
+				v8::Isolate* isolate = args.GetIsolate();
+				size_t const arg_count = args.Length();
+				bool matched = false;
+				object_pointer_type result{};
+				std::string errors;
+
+				std::apply([&](auto const&... entries)
+				{
+					((matched || [&]
+					{
+						using Entry = std::decay_t<decltype(entries)>;
+						using F = typename detail::entry_func_type<Entry>::type;
+
+						constexpr size_t min = detail::overload_arg_range<Entry>::min_args;
+						constexpr size_t max = detail::overload_arg_range<Entry>::max_args;
+						if (arg_count < min || arg_count > max)
+							return false;
+
+						if (arg_count > 0 && !detail::overload_types_match<F, Traits>(isolate, args, arg_count))
+							return false;
+
+						try
+						{
+							result = object_pointer_type(detail::call_ctor_entry<Traits>(entries, args));
+							matched = true;
+							return true;
+						}
+						catch (std::exception const& ex)
+						{
+							if (!errors.empty()) errors += "; ";
+							errors += ex.what();
+							return false;
+						}
+					}()), ...);
+				}, set.entries);
+
+				if (!matched)
+				{
+					std::string msg = "No matching constructor overload for "
+						+ std::to_string(arg_count) + " argument(s)";
+					if (!errors.empty())
+					{
+						msg += ". Tried: " + errors;
+					}
+					throw std::runtime_error(msg);
+				}
+
+				return std::make_pair(pointer_type(result), Traits::object_size(result));
+			});
+		return *this;
+	}
+
 	/// Inhert from C++ class U
 	template<typename U>
 	class_& inherit()
@@ -602,6 +698,7 @@ public:
 
 	/// Set read/write class property with getter and setter
 	template<typename GetFunction, typename SetFunction = detail::none>
+		requires (!is_fast_function<std::decay_t<GetFunction>>::value)
 	class_& property(std::string_view name, GetFunction&& get, SetFunction&& set = {})
 	{
 		using Getter = typename std::conditional_t<std::is_member_function_pointer_v<GetFunction>,
@@ -643,6 +740,46 @@ public:
 			v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #endif
+		return *this;
+	}
+
+	/// Set read-only class property with V8 Fast API getter
+	template<auto GetPtr>
+	class_& property(std::string_view name, fast_function<GetPtr>)
+	{
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		auto getter_template = wrap_function_template<GetPtr, Traits>(
+			isolate(), fast_function<GetPtr>{},
+			v8::SideEffectType::kHasNoSideEffect);
+
+		class_info_.js_function_template()->InstanceTemplate()->SetAccessorProperty(
+			v8_name, getter_template,
+			v8::Local<v8::FunctionTemplate>(),
+			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
+
+		return *this;
+	}
+
+	/// Set read/write class property with V8 Fast API getter and setter
+	template<auto GetPtr, auto SetPtr>
+	class_& property(std::string_view name, fast_function<GetPtr>, fast_function<SetPtr>)
+	{
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		auto getter_template = wrap_function_template<GetPtr, Traits>(
+			isolate(), fast_function<GetPtr>{},
+			v8::SideEffectType::kHasNoSideEffect);
+		auto setter_template = wrap_function_template<SetPtr, Traits>(
+			isolate(), fast_function<SetPtr>{},
+			v8::SideEffectType::kHasSideEffectToReceiver);
+
+		class_info_.js_function_template()->InstanceTemplate()->SetAccessorProperty(
+			v8_name, getter_template, setter_template,
+			v8::PropertyAttribute(v8::DontDelete));
+
 		return *this;
 	}
 
