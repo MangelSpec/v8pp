@@ -48,8 +48,8 @@ public:
 	using const_pointer_type = typename Traits::const_pointer_type;
 	using object_id = typename Traits::object_id;
 
-	using ctor_function = std::function<std::pair<pointer_type, size_t> (v8::FunctionCallbackInfo<v8::Value> const& args)>;
-	using dtor_function = std::function<void (v8::Isolate*, pointer_type const&)>;
+	using ctor_function = std::function<std::pair<pointer_type, size_t>(v8::FunctionCallbackInfo<v8::Value> const& args)>;
+	using dtor_function = std::function<void(v8::Isolate*, pointer_type const&)>;
 	using cast_function = pointer_type (*)(pointer_type const&);
 
 	object_registry(v8::Isolate* isolate, type_info const& type, dtor_function&& dtor);
@@ -259,7 +259,7 @@ struct iterator_factory
 			iter_obj->Set(context, v8pp::to_v8_name(isolate, "next"), next_fn).FromJust();
 
 			// weak ref to clean up state when iterator object is GC'd
-			auto* weak_data = new weak_ref_data{iter_state, v8::Global<v8::Object>(isolate, iter_obj)};
+			auto* weak_data = new weak_ref_data{ iter_state, v8::Global<v8::Object>(isolate, iter_obj) };
 			weak_data->handle.SetWeak(weak_data, weak_callback, v8::WeakCallbackType::kParameter);
 
 			args.GetReturnValue().Set(iter_obj);
@@ -286,20 +286,24 @@ struct iterator_factory
 			if (iter_state->current == iter_state->end)
 			{
 				result->Set(context,
-					v8pp::to_v8_name(isolate, "value"),
-					v8::Undefined(isolate)).FromJust();
+						  v8pp::to_v8_name(isolate, "value"),
+						  v8::Undefined(isolate))
+					.FromJust();
 				result->Set(context,
-					v8pp::to_v8_name(isolate, "done"),
-					v8::Boolean::New(isolate, true)).FromJust();
+						  v8pp::to_v8_name(isolate, "done"),
+						  v8::Boolean::New(isolate, true))
+					.FromJust();
 			}
 			else
 			{
 				result->Set(context,
-					v8pp::to_v8_name(isolate, "value"),
-					v8pp::to_v8(isolate, *iter_state->current)).FromJust();
+						  v8pp::to_v8_name(isolate, "value"),
+						  v8pp::to_v8(isolate, *iter_state->current))
+					.FromJust();
 				result->Set(context,
-					v8pp::to_v8_name(isolate, "done"),
-					v8::Boolean::New(isolate, false)).FromJust();
+						  v8pp::to_v8_name(isolate, "done"),
+						  v8::Boolean::New(isolate, false))
+					.FromJust();
 				++iter_state->current;
 			}
 
@@ -449,10 +453,9 @@ public:
 	class_& ctor(ctor_function create = &Create::call)
 	{
 		class_info_.set_ctor([create = std::move(create)](v8::FunctionCallbackInfo<v8::Value> const& args)
-		{
+			{
 			auto object = create(args);
-			return std::make_pair(object, Traits::object_size(object));
-		});
+			return std::make_pair(object, Traits::object_size(object)); });
 		return *this;
 	}
 
@@ -461,10 +464,97 @@ public:
 	class_& ctor(v8pp::defaults<Defs...> defs)
 	{
 		class_info_.set_ctor([defs = std::move(defs)](v8::FunctionCallbackInfo<v8::Value> const& args)
-		{
+			{
 			auto object = detail::call_from_v8<Traits>(Traits::template create<T, Args...>, args, defs);
-			return std::make_pair(object, Traits::object_size(object));
-		});
+			return std::make_pair(object, Traits::object_size(object)); });
+		return *this;
+	}
+
+	/// Set class constructor from a factory function with default parameter values.
+	/// The factory must return object_pointer_type (T* for raw_ptr_traits, shared_ptr<T> for shared_ptr_traits).
+	template<typename Function, typename... Defs>
+	requires(detail::is_callable<std::decay_t<Function>>::value && !v8pp::is_defaults<std::decay_t<Function>>::value)
+	class_& ctor(Function&& func, v8pp::defaults<Defs...> defs)
+	{
+		using F = std::decay_t<Function>;
+		static_assert(std::is_convertible_v<typename detail::function_traits<F>::return_type, object_pointer_type>,
+			"Constructor factory must return object_pointer_type");
+
+		class_info_.set_ctor(
+			[func = F(std::forward<Function>(func)), defs = std::move(defs)](v8::FunctionCallbackInfo<v8::Value> const& args)
+			{
+				F f = func; // copy from captured const
+				auto object = detail::call_from_v8<Traits>(std::move(f), args, defs);
+				return std::make_pair(pointer_type(object), Traits::object_size(object));
+			});
+		return *this;
+	}
+
+	/// Set class constructor with multiple overloaded factory functions (multi-dispatch).
+	/// Each factory must return object_pointer_type. Dispatched by arity + type matching (first-match-wins).
+	/// Accepts plain callables and v8pp::with_defaults() entries.
+	template<typename F1, typename F2, typename... Fs>
+	requires((detail::is_callable<std::decay_t<F1>>::value || is_overload_entry<std::decay_t<F1>>::value) && (detail::is_callable<std::decay_t<F2>>::value || is_overload_entry<std::decay_t<F2>>::value) && !std::is_member_function_pointer_v<std::decay_t<F1>> && !std::is_member_function_pointer_v<std::decay_t<F2>>)
+	class_& ctor(F1&& f1, F2&& f2, Fs&&... fs)
+	{
+		using Set = detail::overload_set<
+			decltype(detail::make_overload_entry(std::forward<F1>(f1))),
+			decltype(detail::make_overload_entry(std::forward<F2>(f2))),
+			decltype(detail::make_overload_entry(std::forward<Fs>(fs)))...>;
+
+		class_info_.set_ctor(
+			[set = Set{ std::make_tuple(
+				 detail::make_overload_entry(std::forward<F1>(f1)),
+				 detail::make_overload_entry(std::forward<F2>(f2)),
+				 detail::make_overload_entry(std::forward<Fs>(fs))...) }](v8::FunctionCallbackInfo<v8::Value> const& args)
+			{
+				v8::Isolate* isolate = args.GetIsolate();
+				size_t const arg_count = args.Length();
+				bool matched = false;
+				object_pointer_type result{};
+				std::string errors;
+
+				std::apply([&](auto const&... entries)
+					{ ((matched || [&]
+						   {
+							   using Entry = std::decay_t<decltype(entries)>;
+							   using F = typename detail::entry_func_type<Entry>::type;
+
+							   constexpr size_t min = detail::overload_arg_range<Entry>::min_args;
+							   constexpr size_t max = detail::overload_arg_range<Entry>::max_args;
+							   if (arg_count < min || arg_count > max)
+								   return false;
+
+							   if (arg_count > 0 && !detail::overload_types_match<F, Traits>(isolate, args, arg_count))
+								   return false;
+
+							   try
+							   {
+								   result = object_pointer_type(detail::call_ctor_entry<Traits>(entries, args));
+								   matched = true;
+								   return true;
+							   }
+							   catch (std::exception const& ex)
+							   {
+								   if (!errors.empty()) errors += "; ";
+								   errors += ex.what();
+								   return false;
+							   }
+						   }()),
+						  ...); }, set.entries);
+
+				if (!matched)
+				{
+					std::string msg = "No matching constructor overload for " + std::to_string(arg_count) + " argument(s)";
+					if (!errors.empty())
+					{
+						msg += ". Tried: " + errors;
+					}
+					throw std::runtime_error(msg);
+				}
+
+				return std::make_pair(pointer_type(result), Traits::object_size(result));
+			});
 		return *this;
 	}
 
@@ -476,10 +566,8 @@ public:
 		// TODO: std::is_convertible<T*, U*> and check for duplicates in hierarchy?
 		auto& base = detail::classes::find<Traits>(isolate(), detail::type_id<U>());
 		class_info_.add_base(base, [](pointer_type const& ptr)
-		{
-			return pointer_type{Traits::template static_pointer_cast<U>(
-				Traits::template static_pointer_cast<T>(ptr))};
-		});
+			{ return pointer_type{ Traits::template static_pointer_cast<U>(
+				  Traits::template static_pointer_cast<T>(ptr)) }; });
 		class_info_.js_function_template()->Inherit(base.class_function_template());
 		return *this;
 	}
@@ -496,9 +584,7 @@ public:
 	template<typename Function>
 	class_& function(std::string_view name, Function&& func, v8::PropertyAttribute attr = v8::None)
 	{
-		constexpr auto effect = detail::is_const_member_function_v<std::decay_t<Function>>
-			? v8::SideEffectType::kHasNoSideEffect
-			: v8::SideEffectType::kHasSideEffect;
+		constexpr auto effect = detail::is_const_member_function_v<std::decay_t<Function>> ? v8::SideEffectType::kHasNoSideEffect : v8::SideEffectType::kHasSideEffect;
 		return function_impl(name, std::forward<Function>(func), effect, attr);
 	}
 
@@ -515,9 +601,7 @@ public:
 	class_& function(std::string_view name, Function&& func, v8pp::defaults<Defs...> defs,
 		v8::PropertyAttribute attr = v8::None)
 	{
-		constexpr auto effect = detail::is_const_member_function_v<std::decay_t<Function>>
-			? v8::SideEffectType::kHasNoSideEffect
-			: v8::SideEffectType::kHasSideEffect;
+		constexpr auto effect = detail::is_const_member_function_v<std::decay_t<Function>> ? v8::SideEffectType::kHasNoSideEffect : v8::SideEffectType::kHasSideEffect;
 		return function_impl(name, std::forward<Function>(func), std::move(defs), effect, attr);
 	}
 
@@ -527,9 +611,7 @@ public:
 	{
 		using F = typename fast_function<FuncPtr>::func_type;
 		constexpr bool is_mem_fun = std::is_member_function_pointer_v<F>;
-		constexpr auto side_effect = detail::is_const_member_function_v<F>
-			? v8::SideEffectType::kHasNoSideEffect
-			: v8::SideEffectType::kHasSideEffect;
+		constexpr auto side_effect = detail::is_const_member_function_v<F> ? v8::SideEffectType::kHasNoSideEffect : v8::SideEffectType::kHasSideEffect;
 
 		v8::HandleScope scope(isolate());
 
@@ -548,9 +630,7 @@ public:
 
 	/// Set multiple overloaded member/static functions
 	template<typename F1, typename F2, typename... Fs>
-		requires (detail::is_callable<std::decay_t<F2>>::value
-			|| std::is_member_function_pointer_v<std::decay_t<F2>>
-			|| is_overload_entry<std::decay_t<F2>>::value)
+	requires(detail::is_callable<std::decay_t<F2>>::value || std::is_member_function_pointer_v<std::decay_t<F2>> || is_overload_entry<std::decay_t<F2>>::value)
 	class_& function(std::string_view name, F1&& f1, F2&& f2, Fs&&... fs)
 	{
 		v8::HandleScope scope(isolate());
@@ -584,24 +664,25 @@ public:
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 		// SetAccessor removed from ObjectTemplate in V8 12.9+
 		class_info_.js_function_template()
-				->InstanceTemplate()
-				->SetNativeDataProperty(v8_name, getter, setter, data,
-					v8::PropertyAttribute(v8::DontDelete),
-					v8::SideEffectType::kHasNoSideEffect,
-					v8::SideEffectType::kHasSideEffectToReceiver);
+			->InstanceTemplate()
+			->SetNativeDataProperty(v8_name, getter, setter, data,
+				v8::PropertyAttribute(v8::DontDelete),
+				v8::SideEffectType::kHasNoSideEffect,
+				v8::SideEffectType::kHasSideEffectToReceiver);
 #else
 		class_info_.js_function_template()
-				->PrototypeTemplate()
-				->SetAccessor(v8_name, getter, setter, data,
-					v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
-					v8::SideEffectType::kHasNoSideEffect,
-					v8::SideEffectType::kHasSideEffectToReceiver);
+			->PrototypeTemplate()
+			->SetAccessor(v8_name, getter, setter, data,
+				v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
+				v8::SideEffectType::kHasNoSideEffect,
+				v8::SideEffectType::kHasSideEffectToReceiver);
 #endif
 		return *this;
 	}
 
 	/// Set read/write class property with getter and setter
 	template<typename GetFunction, typename SetFunction = detail::none>
+	requires(!is_fast_function<std::decay_t<GetFunction>>::value)
 	class_& property(std::string_view name, GetFunction&& get, SetFunction&& set = {})
 	{
 		using Getter = typename std::conditional_t<std::is_member_function_pointer_v<GetFunction>,
@@ -612,11 +693,8 @@ public:
 			typename detail::function_traits<SetFunction>::template pointer_type<T>,
 			typename std::decay_t<SetFunction>>;
 
-		static_assert(std::is_member_function_pointer_v<GetFunction>
-			|| detail::is_callable<Getter>::value, "GetFunction must be callable");
-		static_assert(std::is_member_function_pointer_v<SetFunction>
-			|| detail::is_callable<Setter>::value
-			|| std::same_as<Setter, detail::none>, "SetFunction must be callable");
+		static_assert(std::is_member_function_pointer_v<GetFunction> || detail::is_callable<Getter>::value, "GetFunction must be callable");
+		static_assert(std::is_member_function_pointer_v<SetFunction> || detail::is_callable<Setter>::value || std::same_as<Setter, detail::none>, "SetFunction must be callable");
 
 		using GetClass = std::conditional_t<detail::function_with_object<Getter, T>, T, detail::none>;
 		using SetClass = std::conditional_t<detail::function_with_object<Setter, T>, T, detail::none>;
@@ -630,9 +708,7 @@ public:
 		v8::Local<v8::String> v8_name = v8pp::to_v8_name(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
 
-		v8::SideEffectType setter_effect = property_type::is_readonly
-			? v8::SideEffectType::kHasSideEffect
-			: v8::SideEffectType::kHasSideEffectToReceiver;
+		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 		// SetAccessor removed from ObjectTemplate in V8 12.9+
 		class_info_.js_function_template()->InstanceTemplate()->SetNativeDataProperty(v8_name, getter, setter, data,
@@ -643,6 +719,46 @@ public:
 			v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #endif
+		return *this;
+	}
+
+	/// Set read-only class property with V8 Fast API getter
+	template<auto GetPtr>
+	class_& property(std::string_view name, fast_function<GetPtr>)
+	{
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		auto getter_template = wrap_function_template<GetPtr, Traits>(
+			isolate(), fast_function<GetPtr>{},
+			v8::SideEffectType::kHasNoSideEffect);
+
+		class_info_.js_function_template()->InstanceTemplate()->SetAccessorProperty(
+			v8_name, getter_template,
+			v8::Local<v8::FunctionTemplate>(),
+			v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
+
+		return *this;
+	}
+
+	/// Set read/write class property with V8 Fast API getter and setter
+	template<auto GetPtr, auto SetPtr>
+	class_& property(std::string_view name, fast_function<GetPtr>, fast_function<SetPtr>)
+	{
+		v8::HandleScope scope(isolate());
+
+		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
+		auto getter_template = wrap_function_template<GetPtr, Traits>(
+			isolate(), fast_function<GetPtr>{},
+			v8::SideEffectType::kHasNoSideEffect);
+		auto setter_template = wrap_function_template<SetPtr, Traits>(
+			isolate(), fast_function<SetPtr>{},
+			v8::SideEffectType::kHasSideEffectToReceiver);
+
+		class_info_.js_function_template()->InstanceTemplate()->SetAccessorProperty(
+			v8_name, getter_template, setter_template,
+			v8::PropertyAttribute(v8::DontDelete));
+
 		return *this;
 	}
 
@@ -663,8 +779,7 @@ public:
 		class_info_.const_properties.emplace(name, [get = std::move(get)](v8::Isolate* isolate, pointer_type obj)
 			{
 				auto typed_obj = Traits::template static_pointer_cast<T>(obj);
-				return to_v8(isolate, ((*typed_obj).*get)());
-			});
+				return to_v8(isolate, ((*typed_obj).*get)()); });
 		return *this;
 	}
 
@@ -717,7 +832,7 @@ public:
 		{
 			using Invoker = detail::to_primitive_invoker<T, Traits, std::decay_t<Function>>;
 			v8::Local<v8::Value> data = detail::external_data::set(iso,
-				Invoker{std::decay_t<Function>(std::forward<Function>(func))});
+				Invoker{ std::decay_t<Function>(std::forward<Function>(func)) });
 			wrapped_fun = v8::FunctionTemplate::New(iso, &Invoker::callback, data,
 				v8::Local<v8::Signature>(), 0, v8::ConstructorBehavior::kThrow,
 				v8::SideEffectType::kHasNoSideEffect);
@@ -741,8 +856,8 @@ public:
 			std::decay_t<BeginFn>, std::decay_t<EndFn>>;
 
 		v8::Local<v8::Value> data = detail::external_data::set(iso,
-			Factory{std::decay_t<BeginFn>(std::forward<BeginFn>(begin_fn)),
-			        std::decay_t<EndFn>(std::forward<EndFn>(end_fn))});
+			Factory{ std::decay_t<BeginFn>(std::forward<BeginFn>(begin_fn)),
+				std::decay_t<EndFn>(std::forward<EndFn>(end_fn)) });
 
 		v8::Local<v8::FunctionTemplate> iter_tmpl = v8::FunctionTemplate::New(iso,
 			&Factory::iterator_callback, data);
@@ -761,9 +876,9 @@ public:
 		v8::HandleScope scope(iso);
 		v8::Local<v8::Context> context = iso->GetCurrentContext();
 
-		class_info_.js_function_template()->GetFunction(context).ToLocalChecked()
-			->DefineOwnProperty(context, v8pp::to_v8_name(iso, name), to_v8(iso, value),
-				v8::PropertyAttribute(v8::DontDelete | (readonly ? v8::ReadOnly : 0))).FromJust();
+		class_info_.js_function_template()->GetFunction(context).ToLocalChecked()->DefineOwnProperty(context, v8pp::to_v8_name(iso, name), to_v8(iso, value),
+																					 v8::PropertyAttribute(v8::DontDelete | (readonly ? v8::ReadOnly : 0)))
+			.FromJust();
 		return *this;
 	}
 
@@ -975,7 +1090,7 @@ private:
 			{
 				isolate->ThrowException(throw_ex(isolate, ex.what()));
 			}
-			//TODO: info.GetReturnValue().Set(false);
+			// TODO: info.GetReturnValue().Set(false);
 		}
 	}
 };

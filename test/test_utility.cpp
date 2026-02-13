@@ -34,8 +34,13 @@ void test_args_derived(F&& f)
 	test_args<ArgsTuple, G>(std::forward<F>(f));
 }
 
-void x() {}
-int y(int, float) { return 1; }
+void x()
+{
+}
+int y(int, float)
+{
+	return 1;
+}
 
 void test_function_traits()
 {
@@ -45,11 +50,14 @@ void test_function_traits()
 	test_ret<int>(y);
 	test_args<std::tuple<int, float>>(y);
 
-	std::function<bool (int, char, float)> z;
+	std::function<bool(int, char, float)> z;
 	test_ret<bool>(z);
 	test_args<std::tuple<int, char, float>>(z);
 
-	auto lambda = [](int, bool) -> char { return 'z'; };
+	auto lambda = [](int, bool) -> char
+	{
+		return 'z';
+	};
 	test_ret<char>(lambda);
 	test_args<std::tuple<int, bool>>(lambda);
 
@@ -139,9 +147,18 @@ void test_tuple_tail()
 	static_assert(std::same_as<tuple_tail<std::tuple<int, char, bool>>::type, std::tuple<char, bool>>);
 }
 
-int f() { return 1; }
-int g(int x) { return x; }
-int h(int x, bool) { return x; }
+int f()
+{
+	return 1;
+}
+int g(int x)
+{
+	return x;
+}
+int h(int x, bool)
+{
+	return x;
+}
 
 struct Y
 {
@@ -161,7 +178,8 @@ void test_is_callable()
 	static_assert(is_callable<decltype(g)>::value, "g is callable");
 	static_assert(is_callable<decltype(h)>::value, "h is callable");
 
-	auto lambda = [](){};
+	auto lambda = []() {
+	};
 	static_assert(is_callable<decltype(lambda)>::value, "lambda is callable");
 
 	static_assert(is_callable<Z>::value, "Z is callable");

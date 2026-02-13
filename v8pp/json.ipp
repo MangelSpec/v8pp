@@ -57,8 +57,7 @@ V8PP_IMPL v8::Local<v8::Object> json_object(v8::Isolate* isolate, v8::Local<v8::
 	for (uint32_t i = 0, count = prop_names->Length(); i < count; ++i)
 	{
 		v8::Local<v8::Value> name, value;
-		if (prop_names->Get(context, i).ToLocal(&name)
-			&& object->Get(context, name).ToLocal(&value))
+		if (prop_names->Get(context, i).ToLocal(&name) && object->Get(context, name).ToLocal(&value))
 		{
 			if (value->IsFunction())
 			{

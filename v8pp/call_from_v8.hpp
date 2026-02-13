@@ -17,7 +17,8 @@ template<typename... Defs>
 struct defaults
 {
 	std::tuple<Defs...> values;
-	explicit constexpr defaults(Defs... args) : values(std::move(args)...) {}
+	explicit constexpr defaults(Defs... args)
+		: values(std::move(args)...) {}
 };
 
 template<typename... Defs>
@@ -25,10 +26,14 @@ defaults(Defs...) -> defaults<Defs...>;
 
 /// Type trait to detect defaults<...>
 template<typename T>
-struct is_defaults : std::false_type {};
+struct is_defaults : std::false_type
+{
+};
 
 template<typename... Defs>
-struct is_defaults<defaults<Defs...>> : std::true_type {};
+struct is_defaults<defaults<Defs...>> : std::true_type
+{
+};
 
 } // namespace v8pp
 
@@ -66,7 +71,8 @@ struct call_from_v8_traits
 	};
 
 	template<size_t Index>
-	using arg_type = typename tuple_element < Index + is_mem_fun, Index<(arg_count + offset)>::type;
+	using arg_type = typename tuple_element < Index + is_mem_fun,
+		  Index<(arg_count + offset)>::type;
 
 	template<typename Arg, typename Traits,
 		typename T = std::remove_reference_t<Arg>,
@@ -104,7 +110,7 @@ decltype(auto) call_from_v8_impl(F&& func, v8::FunctionCallbackInfo<v8::Value> c
 }
 
 template<typename Traits, typename F, typename... ObjArg>
-	requires (sizeof...(ObjArg) == 0 || (!v8pp::is_defaults<std::remove_cvref_t<ObjArg>>::value && ...))
+requires(sizeof...(ObjArg) == 0 || (!v8pp::is_defaults<std::remove_cvref_t<ObjArg>>::value && ...))
 decltype(auto) call_from_v8(F&& func, v8::FunctionCallbackInfo<v8::Value> const& args, ObjArg&... obj)
 {
 	constexpr bool with_isolate = is_first_arg_isolate<F>;
@@ -166,7 +172,7 @@ decltype(auto) arg_or_default(v8::FunctionCallbackInfo<v8::Value> const& args,
 		using arg_type = typename CallTraits::template arg_type<Index + CallTraits::offset>;
 		using value_type = std::remove_cv_t<std::remove_reference_t<arg_type>>;
 
-		if (static_cast<size_t>(args.Length()) <= Index)
+		if (static_cast<size_t>(args.Length()) <= Index || args[Index]->IsUndefined())
 		{
 			constexpr size_t def_index = Index - DefaultsStart;
 			return static_cast<value_type>(std::get<def_index>(defaults_tuple));

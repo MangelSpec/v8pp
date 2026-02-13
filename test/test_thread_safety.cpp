@@ -18,7 +18,8 @@ struct ThreadObj
 	static std::atomic<int> total_destroyed;
 	int value;
 
-	explicit ThreadObj(int v = 0) : value(v) { ++total_created; }
+	explicit ThreadObj(int v = 0)
+		: value(v) { ++total_created; }
 	~ThreadObj() { ++total_destroyed; }
 
 	int get() const { return value; }
@@ -30,10 +31,11 @@ std::atomic<int> ThreadObj::total_destroyed = 0;
 
 struct SharedObj
 {
-	std::atomic<int> access_count{0};
+	std::atomic<int> access_count{ 0 };
 	int value;
 
-	explicit SharedObj(int v = 0) : value(v) {}
+	explicit SharedObj(int v = 0)
+		: value(v) {}
 
 	int get()
 	{
@@ -61,7 +63,7 @@ void test_concurrent_isolates()
 
 	constexpr int num_threads = 4;
 	constexpr int objects_per_thread = 1000;
-	std::atomic<int> errors{0};
+	std::atomic<int> errors{ 0 };
 
 	auto worker = [&errors](int thread_id)
 	{
@@ -85,9 +87,10 @@ void test_concurrent_isolates()
 				v8::HandleScope batch_scope(isolate);
 				std::string script =
 					"for (var i = 0; i < 100; i++) {"
-					"  var o = new ThreadObj(" + std::to_string(thread_id * 1000 + batch * 100) + " + i);"
-					"  o.add(1);"
-					"} 0";
+					"  var o = new ThreadObj(" +
+					std::to_string(thread_id * 1000 + batch * 100) + " + i);"
+																	 "  o.add(1);"
+																	 "} 0";
 				run_script<int>(context, script.c_str());
 			}
 
@@ -193,7 +196,7 @@ void test_cross_isolate_shared_ptr_concurrent()
 	auto shared = std::make_shared<SharedObj>(99);
 
 	constexpr int num_threads = 4;
-	std::atomic<int> errors{0};
+	std::atomic<int> errors{ 0 };
 
 	auto worker = [&shared, &errors](int)
 	{
@@ -268,9 +271,9 @@ struct IsoTypeB
 
 void test_isolate_independence()
 {
-	std::atomic<int> errors{0};
-	std::atomic<int> result_a{0};
-	std::atomic<int> result_b{0};
+	std::atomic<int> errors{ 0 };
+	std::atomic<int> result_a{ 0 };
+	std::atomic<int> result_b{ 0 };
 
 	auto worker_a = [&]()
 	{
@@ -286,7 +289,10 @@ void test_isolate_independence()
 
 			result_a = run_script<int>(context, "var x = new MyClass(); x.get()");
 		}
-		catch (std::exception const&) { ++errors; }
+		catch (std::exception const&)
+		{
+			++errors;
+		}
 	};
 
 	auto worker_b = [&]()
@@ -303,7 +309,10 @@ void test_isolate_independence()
 
 			result_b = run_script<int>(context, "var x = new MyClass(); x.get()");
 		}
-		catch (std::exception const&) { ++errors; }
+		catch (std::exception const&)
+		{
+			++errors;
+		}
 	};
 
 	std::thread ta(worker_a);

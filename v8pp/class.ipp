@@ -48,8 +48,7 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 	v8::HandleScope scope(isolate_);
 
 	v8::Local<v8::FunctionTemplate> func = v8::FunctionTemplate::New(isolate_);
-	v8::Local<v8::FunctionTemplate> js_func = v8::FunctionTemplate::New(isolate_,
-		[](v8::FunctionCallbackInfo<v8::Value> const& args)
+	v8::Local<v8::FunctionTemplate> js_func = v8::FunctionTemplate::New(isolate_, [](v8::FunctionCallbackInfo<v8::Value> const& args)
 		{
 			v8::Isolate* isolate = args.GetIsolate();
 			if (!args.IsConstructCall())
@@ -78,8 +77,7 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 			catch (std::exception const& ex)
 			{
 				args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
-			}
-		}, external_data::set(isolate, this));
+			} }, external_data::set(isolate, this));
 
 	func_.Reset(isolate, func);
 	js_func_.Reset(isolate, js_func);
@@ -102,12 +100,12 @@ template<typename Traits>
 V8PP_IMPL void object_registry<Traits>::add_base(object_registry& info, cast_function cast)
 {
 	auto it = std::find_if(bases_.begin(), bases_.end(),
-		[&info](base_class_info const& base) { return &base.info == &info; });
+		[&info](base_class_info const& base)
+		{ return &base.info == &info; });
 	if (it != bases_.end())
 	{
-		//assert(false && "duplicated inheritance");
-		throw std::runtime_error(class_name()
-			+ " is already inherited from " + info.class_name());
+		// assert(false && "duplicated inheritance");
+		throw std::runtime_error(class_name() + " is already inherited from " + info.class_name());
 	}
 	bases_.emplace_back(info, cast);
 	info.derivatives_.emplace_back(this);
@@ -208,9 +206,8 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 	auto it = objects_.find(object);
 	if (it != objects_.end())
 	{
-		//assert(false && "duplicate object");
-		throw std::runtime_error(class_name()
-			+ " duplicate object " + pointer_str(Traits::pointer_id(object)));
+		// assert(false && "duplicate object");
+		throw std::runtime_error(class_name() + " duplicate object " + pointer_str(Traits::pointer_id(object)));
 	}
 
 	v8::EscapableHandleScope scope(isolate_);
@@ -226,8 +223,7 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 			if (this_ && this_->is_valid())
 			{
 				this_->remove_object(object);
-			}
-		}, v8::WeakCallbackType::kInternalFields);
+			} }, v8::WeakCallbackType::kInternalFields);
 	objects_.emplace(object, wrapped_object{ std::move(pobj), size });
 	apply_const_properties(isolate_, obj, object);
 	if (size)
@@ -249,9 +245,8 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 	auto it = objects_.find(object);
 	if (it != objects_.end())
 	{
-		//assert(false && "duplicate object");
-		throw std::runtime_error(class_name()
-			+ " duplicate object " + pointer_str(Traits::pointer_id(object)));
+		// assert(false && "duplicate object");
+		throw std::runtime_error(class_name() + " duplicate object " + pointer_str(Traits::pointer_id(object)));
 	}
 
 	v8::EscapableHandleScope scope(isolate_);
@@ -259,8 +254,7 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 	v8::Local<v8::Context> context = isolate_->GetCurrentContext();
 	v8::Local<v8::Function> func;
 	v8::Local<v8::Object> obj;
-	if (class_function_template()->GetFunction(context).ToLocal(&func)
-		&& func->NewInstance(context).ToLocal(&obj))
+	if (class_function_template()->GetFunction(context).ToLocal(&func) && func->NewInstance(context).ToLocal(&obj))
 	{
 		obj->SetAlignedPointerInInternalField(0, Traits::pointer_id(object));
 		obj->SetAlignedPointerInInternalField(1, this);
@@ -273,8 +267,7 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 				if (this_ && this_->is_valid())
 				{
 					this_->remove_object(object);
-				}
-			}, v8::WeakCallbackType::kInternalFields);
+				} }, v8::WeakCallbackType::kInternalFields);
 		objects_.emplace(object, wrapped_object{ std::move(pobj), size });
 		apply_const_properties(isolate_, obj, object);
 		if (size)
@@ -291,11 +284,11 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(v8::Functio
 {
 	if (!ctor_)
 	{
-		//assert(false && "create not allowed");
+		// assert(false && "create not allowed");
 		throw std::runtime_error(class_name() + " has no constructor");
 	}
 	auto [object, size] = ctor_(args);
-	//return wrap_object(object, size);
+	// return wrap_object(object, size);
 	return wrap_this(args.This(), object, size);
 }
 
@@ -389,9 +382,8 @@ V8PP_IMPL object_registry<Traits>& classes::add(v8::Isolate* isolate, type_info 
 	auto it = info->classes_.find(type.id());
 	if (it != info->classes_.end())
 	{
-		//assert(false && "class already registred");
-		throw std::runtime_error(it->second->class_name()
-			+ " is already exist in isolate " + pointer_str(isolate));
+		// assert(false && "class already registred");
+		throw std::runtime_error(it->second->class_name() + " is already exist in isolate " + pointer_str(isolate));
 	}
 	auto registry_ptr = new object_registry<Traits>(isolate, type, std::move(dtor));
 	info->classes_[type.id()] = std::unique_ptr<class_info>(registry_ptr);
@@ -410,10 +402,7 @@ V8PP_IMPL void classes::remove(v8::Isolate* isolate, type_info const& type)
 			type_info const& traits = type_id<Traits>();
 			if (it->second->traits != traits)
 			{
-				throw std::runtime_error(it->second->class_name()
-					+ " is already registered in isolate "
-					+ pointer_str(isolate) + " before of "
-					+ class_info(type, traits).class_name());
+				throw std::runtime_error(it->second->class_name() + " is already registered in isolate " + pointer_str(isolate) + " before of " + class_info(type, traits).class_name());
 			}
 			info->classes_.erase(it);
 			if (info->classes_.empty())
@@ -436,17 +425,13 @@ V8PP_IMPL object_registry<Traits>& classes::find(v8::Isolate* isolate, type_info
 		{
 			if (it->second->traits != traits)
 			{
-				throw std::runtime_error(it->second->class_name()
-					+ " is already registered in isolate "
-					+ pointer_str(isolate) + " before of "
-					+ class_info(type, traits).class_name());
+				throw std::runtime_error(it->second->class_name() + " is already registered in isolate " + pointer_str(isolate) + " before of " + class_info(type, traits).class_name());
 			}
 			return *static_cast<object_registry<Traits>*>(it->second.get());
 		}
 	}
-	//assert(false && "class not registered");
-	throw std::runtime_error(class_info(type, traits).class_name()
-		+ " is not registered in isolate " + pointer_str(isolate));
+	// assert(false && "class not registered");
+	throw std::runtime_error(class_info(type, traits).class_name() + " is not registered in isolate " + pointer_str(isolate));
 }
 
 V8PP_IMPL void classes::remove_all(v8::Isolate* isolate)

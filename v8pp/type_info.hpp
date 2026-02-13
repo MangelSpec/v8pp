@@ -13,7 +13,7 @@ class type_info
 public:
 	constexpr uintptr_t id() const { return id_; }
 	constexpr std::string_view name() const { return name_; }
-	
+
 	constexpr bool operator==(type_info const& other) const { return id_ == other.id_; }
 	constexpr bool operator!=(type_info const& other) const { return id_ != other.id_; }
 

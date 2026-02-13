@@ -75,7 +75,7 @@ struct address
 	std::string house;
 	std::optional<std::string> flat;
 
-	//for test framework
+	// for test framework
 	bool operator==(address const& other) const = default;
 
 	friend std::ostream& operator<<(std::ostream& os, address const& a)
@@ -90,7 +90,7 @@ struct person
 	int age;
 	std::optional<address> home;
 
-	//for test framework
+	// for test framework
 	bool operator==(person const& other) const = default;
 
 	friend std::ostream& operator<<(std::ostream& os, person const& p)
@@ -207,7 +207,8 @@ struct convert<person>
 void test_convert_user_type(v8::Isolate* isolate)
 {
 	person p;
-	p.name = "Al"; p.age = 33;
+	p.name = "Al";
+	p.age = 33;
 	test_conv(isolate, p);
 	p.home = { .zip = "90210", .city = "Beverly Hills", .street = "Main St", .house = "123", .flat = "B2" };
 	test_conv(isolate, p);
@@ -215,19 +216,17 @@ void test_convert_user_type(v8::Isolate* isolate)
 
 void test_convert_optional(v8::Isolate* isolate)
 {
-	test_conv(isolate, std::optional<int>{42});
-	test_conv(isolate, std::optional<int>{std::nullopt});
+	test_conv(isolate, std::optional<int>{ 42 });
+	test_conv(isolate, std::optional<int>{ std::nullopt });
 
 	check("null", v8pp::from_v8<std::optional<std::string>>(isolate, v8::Null(isolate)) == std::nullopt);
-    check("undefined", v8pp::from_v8<std::optional<std::string>>(isolate, v8::Undefined(isolate)) == std::nullopt);
+	check("undefined", v8pp::from_v8<std::optional<std::string>>(isolate, v8::Undefined(isolate)) == std::nullopt);
 
-    check("nullopt", v8pp::to_v8(isolate, std::nullopt)->IsNull());
+	check("nullopt", v8pp::to_v8(isolate, std::nullopt)->IsNull());
 	check("monostate", v8pp::to_v8(isolate, std::monostate{})->IsUndefined());
 
 	check_ex<v8pp::invalid_argument>("wrong optional type", [isolate]()
-	{
-		v8pp::from_v8<std::optional<int>>(isolate, v8pp::to_v8(isolate, std::optional<std::string>{"aa"}));
-	});
+		{ v8pp::from_v8<std::optional<int>>(isolate, v8pp::to_v8(isolate, std::optional<std::string>{ "aa" })); });
 }
 
 void test_convert_tuple(v8::Isolate* isolate)
@@ -245,11 +244,10 @@ void test_convert_tuple(v8::Isolate* isolate)
 	test_conv(isolate, tuple_4);
 
 	check_ex<v8pp::invalid_argument>("Tuple", [isolate, &tuple_1]()
-	{
+		{
 		// incorrect number of elements
 		v8::Local<v8::Array> tuple_1_ = v8pp::to_v8(isolate, tuple_1);
-		v8pp::from_v8<std::tuple<size_t, bool, std::string>>(isolate, tuple_1_);
-	});
+		v8pp::from_v8<std::tuple<size_t, bool, std::string>>(isolate, tuple_1_); });
 
 	{
 		// bool converts to string via ToString()
@@ -266,13 +264,20 @@ struct variant_check
 
 	v8::Isolate* isolate;
 
-	explicit variant_check(v8::Isolate* isolate) : isolate(isolate) {}
+	explicit variant_check(v8::Isolate* isolate)
+		: isolate(isolate) {}
 
 	template<typename T>
-	static T const& get(T const& in) { return in; }
+	static T const& get(T const& in)
+	{
+		return in;
+	}
 
 	template<typename T>
-	static T const& get(variant const& in) { return std::get<T>(in); }
+	static T const& get(variant const& in)
+	{
+		return std::get<T>(in);
+	}
 
 	template<typename T, typename From, typename To>
 	void check(T const& value)
@@ -295,9 +300,7 @@ struct variant_check
 	{
 		v8::Local<v8::Value> v8_value = v8pp::convert<T>::to_v8(isolate, value);
 		::check_ex<std::exception>("variant", [&]()
-		{
-			v8pp::convert<variant>::from_v8(isolate, v8_value);
-		});
+			{ v8pp::convert<variant>::from_v8(isolate, v8_value); });
 	}
 
 	void operator()(Ts const&... values)
@@ -306,7 +309,7 @@ struct variant_check
 	}
 };
 
-static int64_t const V8_MAX_INT = (uint64_t{1} << std::numeric_limits<double>::digits) - 1;
+static int64_t const V8_MAX_INT = (uint64_t{ 1 } << std::numeric_limits<double>::digits) - 1;
 static int64_t const V8_MIN_INT = -V8_MAX_INT - 1;
 
 template<typename T>
@@ -347,7 +350,7 @@ void check_ranges(v8::Isolate* isolate)
 struct U
 {
 	int value = 1;
-	//for test framework
+	// for test framework
 	bool operator==(U const& other) const { return value == other.value; }
 	bool operator!=(U const& other) const { return value != other.value; }
 	friend std::ostream& operator<<(std::ostream& os, U const& val) { return os << val.value; }
@@ -356,7 +359,7 @@ struct U
 struct U2
 {
 	double value = 2.0;
-	//for test framework
+	// for test framework
 	bool operator==(U2 const& other) const { return value == other.value; }
 	bool operator!=(U2 const& other) const { return value != other.value; }
 	friend std::ostream& operator<<(std::ostream& os, U2 const& val) { return os << val.value; }
@@ -365,7 +368,7 @@ struct U2
 struct V
 {
 	std::string value;
-	//for test framework
+	// for test framework
 	bool operator==(V const& other) const { return value == other.value; }
 	bool operator!=(V const& other) const { return value != other.value; }
 	friend std::ostream& operator<<(std::ostream& os, V const& val) { return os << val.value; }
@@ -374,7 +377,7 @@ struct V
 struct V2
 {
 	std::string value;
-	//for test framework
+	// for test framework
 	bool operator==(V2 const& other) const { return value == other.value; }
 	bool operator!=(V2 const& other) const { return value != other.value; }
 	friend std::ostream& operator<<(std::ostream& os, V2 const& val) { return os << val.value; }
@@ -401,7 +404,7 @@ void test_convert_variant(v8::Isolate* isolate)
 	V2_class.reference_external(isolate, v2);
 
 	variant_check<U, std::shared_ptr<V>, int, std::string, U2, std::shared_ptr<V2>> check{ isolate };
-	check(U{2}, v, -1, "Hello", U2{3.}, v2);
+	check(U{ 2 }, v, -1, "Hello", U2{ 3. }, v2);
 
 	variant_check<bool, float, int32_t> check_arithmetic{ isolate };
 	check_arithmetic(true, 5.5f, 2);
@@ -412,7 +415,7 @@ void test_convert_variant(v8::Isolate* isolate)
 	check_arithmetic_reversed(-2, 2.2f, false);
 
 	variant_check<std::vector<float>, float, std::optional<std::string>> check_vector{ isolate };
-	check_vector({1.f, 2.f, 3.f}, 4.f, std::optional<std::string>("testing"));
+	check_vector({ 1.f, 2.f, 3.f }, 4.f, std::optional<std::string>("testing"));
 	check_vector(std::vector<float>{}, 0.f, std::optional<std::string>{});
 
 	// The order here matters — int64_t/uint64_t not included because both map
@@ -443,16 +446,16 @@ void test_convert_variant(v8::Isolate* isolate)
 
 	// test map
 	variant_check<U, std::map<size_t, U>> map_check{ isolate };
-	map_check(U{3}, std::map<size_t, U>{ { 4, U{4} }, { 2, U{2} } });
+	map_check(U{ 3 }, std::map<size_t, U>{ { 4, U{ 4 } }, { 2, U{ 2 } } });
 
 	variant_check<U, std::unordered_map<int, U2>> unordered_map_check{ isolate };
-	unordered_map_check(U{1}, std::unordered_map<int, U2>{ { 1, U2{1.0} }, { 2, U2{2.0} } });
+	unordered_map_check(U{ 1 }, std::unordered_map<int, U2>{ { 1, U2{ 1.0 } }, { 2, U2{ 2.0 } } });
 
 	variant_check<U, std::multimap<std::string, U>> multimap_check{ isolate };
-	multimap_check(U{2}, std::multimap<std::string, U>{ { "x", U{0} }, { "y", U{1} } });
+	multimap_check(U{ 2 }, std::multimap<std::string, U>{ { "x", U{ 0 } }, { "y", U{ 1 } } });
 
 	variant_check<U2, std::unordered_multimap<char, U>> unordered_multimap_check{ isolate };
-	unordered_multimap_check(U2{3.0}, std::unordered_multimap<char, U>{ { 'a', U{1} }, { 'b', U{2} } });
+	unordered_multimap_check(U2{ 3.0 }, std::unordered_multimap<char, U>{ { 'a', U{ 1 } }, { 'b', U{ 2 } } });
 
 	variant_check<int, std::optional<std::string>, bool> optional_check{ isolate };
 	optional_check(true, "test", 1);
@@ -463,65 +466,39 @@ void test_convert_crash_safety(v8::Isolate* isolate)
 {
 	// from_v8<int> with non-numeric types should throw, not crash
 	check_ex<v8pp::invalid_argument>("from_v8<int> undefined", [isolate]()
-	{
-		v8pp::from_v8<int>(isolate, v8::Undefined(isolate));
-	});
+		{ v8pp::from_v8<int>(isolate, v8::Undefined(isolate)); });
 	check_ex<v8pp::invalid_argument>("from_v8<int> null", [isolate]()
-	{
-		v8pp::from_v8<int>(isolate, v8::Null(isolate));
-	});
+		{ v8pp::from_v8<int>(isolate, v8::Null(isolate)); });
 	check_ex<v8pp::invalid_argument>("from_v8<int> string", [isolate]()
-	{
-		v8pp::from_v8<int>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<int>(isolate, v8pp::to_v8(isolate, "hello")); });
 	check_ex<v8pp::invalid_argument>("from_v8<int> bool", [isolate]()
-	{
-		v8pp::from_v8<int>(isolate, v8pp::to_v8(isolate, true));
-	});
+		{ v8pp::from_v8<int>(isolate, v8pp::to_v8(isolate, true)); });
 	check_ex<v8pp::invalid_argument>("from_v8<int> object", [isolate]()
-	{
-		v8pp::from_v8<int>(isolate, v8::Object::New(isolate));
-	});
+		{ v8pp::from_v8<int>(isolate, v8::Object::New(isolate)); });
 	check_ex<v8pp::invalid_argument>("from_v8<int> empty handle", [isolate]()
-	{
-		v8pp::from_v8<int>(isolate, v8::Local<v8::Value>());
-	});
+		{ v8pp::from_v8<int>(isolate, v8::Local<v8::Value>()); });
 
 	// from_v8<uint32_t> with non-numeric
 	check_ex<v8pp::invalid_argument>("from_v8<uint32_t> string", [isolate]()
-	{
-		v8pp::from_v8<uint32_t>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<uint32_t>(isolate, v8pp::to_v8(isolate, "hello")); });
 
 	// from_v8<double> with non-numeric
 	check_ex<v8pp::invalid_argument>("from_v8<double> string", [isolate]()
-	{
-		v8pp::from_v8<double>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<double>(isolate, v8pp::to_v8(isolate, "hello")); });
 	check_ex<v8pp::invalid_argument>("from_v8<double> undefined", [isolate]()
-	{
-		v8pp::from_v8<double>(isolate, v8::Undefined(isolate));
-	});
+		{ v8pp::from_v8<double>(isolate, v8::Undefined(isolate)); });
 
 	// from_v8<bool> with non-boolean
 	check_ex<v8pp::invalid_argument>("from_v8<bool> int", [isolate]()
-	{
-		v8pp::from_v8<bool>(isolate, v8pp::to_v8(isolate, 42));
-	});
+		{ v8pp::from_v8<bool>(isolate, v8pp::to_v8(isolate, 42)); });
 	check_ex<v8pp::invalid_argument>("from_v8<bool> string", [isolate]()
-	{
-		v8pp::from_v8<bool>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<bool>(isolate, v8pp::to_v8(isolate, "hello")); });
 	check_ex<v8pp::invalid_argument>("from_v8<bool> undefined", [isolate]()
-	{
-		v8pp::from_v8<bool>(isolate, v8::Undefined(isolate));
-	});
+		{ v8pp::from_v8<bool>(isolate, v8::Undefined(isolate)); });
 
 	// from_v8<string> with empty handle
 	check_ex<v8pp::invalid_argument>("from_v8<string> empty handle", [isolate]()
-	{
-		v8pp::from_v8<std::string>(isolate, v8::Local<v8::Value>());
-	});
+		{ v8pp::from_v8<std::string>(isolate, v8::Local<v8::Value>()); });
 
 	// from_v8<string> with object that has throwing toString (Phase 1a fix)
 	{
@@ -529,45 +506,30 @@ void test_convert_crash_safety(v8::Isolate* isolate)
 		v8::Local<v8::Context> ctx = isolate->GetCurrentContext();
 		v8::Local<v8::Object> throwing_obj = v8::Object::New(isolate);
 		auto throwing_fn = v8::Function::New(ctx, [](v8::FunctionCallbackInfo<v8::Value> const& args)
-		{
-			args.GetIsolate()->ThrowException(
-				v8pp::to_v8(args.GetIsolate(), "toString throws!"));
-		}).ToLocalChecked();
+			{ args.GetIsolate()->ThrowException(
+				  v8pp::to_v8(args.GetIsolate(), "toString throws!")); })
+							   .ToLocalChecked();
 		throwing_obj->Set(ctx, v8pp::to_v8(isolate, "toString"), throwing_fn).FromJust();
 
 		check_ex<v8pp::invalid_argument>("from_v8<string> throwing toString", [isolate, &throwing_obj]()
-		{
-			v8pp::from_v8<std::string>(isolate, throwing_obj);
-		});
+			{ v8pp::from_v8<std::string>(isolate, throwing_obj); });
 	}
 
 	// from_v8<vector<int>> with non-array
 	check_ex<v8pp::invalid_argument>("from_v8<vector<int>> int", [isolate]()
-	{
-		v8pp::from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, 42));
-	});
+		{ v8pp::from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, 42)); });
 	check_ex<v8pp::invalid_argument>("from_v8<vector<int>> undefined", [isolate]()
-	{
-		v8pp::from_v8<std::vector<int>>(isolate, v8::Undefined(isolate));
-	});
+		{ v8pp::from_v8<std::vector<int>>(isolate, v8::Undefined(isolate)); });
 	check_ex<v8pp::invalid_argument>("from_v8<vector<int>> string", [isolate]()
-	{
-		v8pp::from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, "hello")); });
 
 	// from_v8<map> with non-object
 	check_ex<v8pp::invalid_argument>("from_v8<map> int", [isolate]()
-	{
-		v8pp::from_v8<std::map<std::string, int>>(isolate, v8pp::to_v8(isolate, 42));
-	});
+		{ v8pp::from_v8<std::map<std::string, int>>(isolate, v8pp::to_v8(isolate, 42)); });
 	check_ex<v8pp::invalid_argument>("from_v8<map> array", [isolate]()
-	{
-		v8pp::from_v8<std::map<std::string, int>>(isolate, v8::Array::New(isolate));
-	});
+		{ v8pp::from_v8<std::map<std::string, int>>(isolate, v8::Array::New(isolate)); });
 	check_ex<v8pp::invalid_argument>("from_v8<map> undefined", [isolate]()
-	{
-		v8pp::from_v8<std::map<std::string, int>>(isolate, v8::Undefined(isolate));
-	});
+		{ v8pp::from_v8<std::map<std::string, int>>(isolate, v8::Undefined(isolate)); });
 
 	// from_v8 with default value — should return default on type mismatch, not crash
 	check_eq("from_v8<int> default on undefined",
@@ -582,15 +544,16 @@ void test_convert_crash_safety(v8::Isolate* isolate)
 		v8pp::from_v8<double>(isolate, v8pp::to_v8(isolate, "hello"), -1.0), -1.0);
 
 	// Enum with non-numeric should throw
-	enum class color { red = 0, green = 1, blue = 2 };
+	enum class color
+	{
+		red = 0,
+		green = 1,
+		blue = 2
+	};
 	check_ex<v8pp::invalid_argument>("from_v8<enum> string", [isolate]()
-	{
-		v8pp::from_v8<color>(isolate, v8pp::to_v8(isolate, "red"));
-	});
+		{ v8pp::from_v8<color>(isolate, v8pp::to_v8(isolate, "red")); });
 	check_ex<v8pp::invalid_argument>("from_v8<enum> undefined", [isolate]()
-	{
-		v8pp::from_v8<color>(isolate, v8::Undefined(isolate));
-	});
+		{ v8pp::from_v8<color>(isolate, v8::Undefined(isolate)); });
 }
 
 void test_convert_try_from_v8(v8::Isolate* isolate)
@@ -634,7 +597,12 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 	check("try string from empty", !v8pp::try_from_v8<std::string>(isolate, v8::Local<v8::Value>()));
 
 	// Enums
-	enum class color { red = 0, green = 1, blue = 2 };
+	enum class color
+	{
+		red = 0,
+		green = 1,
+		blue = 2
+	};
 	auto enum_result = v8pp::try_from_v8<color>(isolate, v8pp::to_v8(isolate, 1));
 	check("try enum valid", enum_result.has_value());
 	check_eq("try enum value", *enum_result, color::green);
@@ -642,16 +610,16 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 
 	// Sequences
 	auto vec_result = v8pp::try_from_v8<std::vector<int>>(isolate,
-		v8pp::to_v8(isolate, std::vector<int>{1, 2, 3}));
+		v8pp::to_v8(isolate, std::vector<int>{ 1, 2, 3 }));
 	check("try vector valid", vec_result.has_value());
-	check_eq("try vector value", *vec_result, std::vector<int>({1, 2, 3}));
+	check_eq("try vector value", *vec_result, std::vector<int>({ 1, 2, 3 }));
 	check("try vector from int", !v8pp::try_from_v8<std::vector<int>>(isolate, v8pp::to_v8(isolate, 42)));
 
 	// Maps
 	check("try map from int", !v8pp::try_from_v8<std::map<std::string, int>>(isolate, v8pp::to_v8(isolate, 42)));
 
 	// Tuples
-	auto tuple_val = std::tuple<int, bool>{42, true};
+	auto tuple_val = std::tuple<int, bool>{ 42, true };
 	auto tuple_result = v8pp::try_from_v8<std::tuple<int, bool>>(isolate, v8pp::to_v8(isolate, tuple_val));
 	check("try tuple valid", tuple_result.has_value());
 	check_eq("try tuple value", *tuple_result, tuple_val);
@@ -672,7 +640,7 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 		!v8pp::try_from_v8<std::optional<int>>(isolate, v8pp::to_v8(isolate, "hello")));
 
 	// Wrapped class: valid unwrap (class_<U> already registered by test_convert_variant)
-	U u_obj{42};
+	U u_obj{ 42 };
 	auto u_v8 = v8pp::class_<U, v8pp::raw_ptr_traits>::reference_external(isolate, &u_obj);
 
 	auto u_ptr_result = v8pp::try_from_v8<U*>(isolate, u_v8);
@@ -684,7 +652,7 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 	check("try U* from plain object", !v8pp::try_from_v8<U*>(isolate, v8::Object::New(isolate)));
 
 	// Wrapped class via shared_ptr (class_<V> already registered by test_convert_variant)
-	auto v_obj = std::make_shared<V>(V{"test"});
+	auto v_obj = std::make_shared<V>(V{ "test" });
 	v8pp::class_<V, v8pp::shared_ptr_traits>::reference_external(isolate, v_obj);
 	auto v_v8 = v8pp::class_<V, v8pp::shared_ptr_traits>::find_object(isolate, v_obj);
 
@@ -698,58 +666,54 @@ void test_convert_try_from_v8(v8::Isolate* isolate)
 void test_convert_bigint(v8::Isolate* isolate)
 {
 	// Basic round-trip for int64_t (values within double precision)
-	test_conv(isolate, int64_t{0});
-	test_conv(isolate, int64_t{42});
-	test_conv(isolate, int64_t{-42});
+	test_conv(isolate, int64_t{ 0 });
+	test_conv(isolate, int64_t{ 42 });
+	test_conv(isolate, int64_t{ -42 });
 
 	// Basic round-trip for uint64_t (values within double precision)
-	test_conv(isolate, uint64_t{0});
-	test_conv(isolate, uint64_t{42});
+	test_conv(isolate, uint64_t{ 0 });
+	test_conv(isolate, uint64_t{ 42 });
 
 	// to_v8 produces Number (not BigInt)
-	auto v8_val = v8pp::to_v8(isolate, int64_t{123});
+	auto v8_val = v8pp::to_v8(isolate, int64_t{ 123 });
 	check("int64_t to_v8 is Number", v8_val->IsNumber());
 
-	auto v8_uval = v8pp::to_v8(isolate, uint64_t{456});
+	auto v8_uval = v8pp::to_v8(isolate, uint64_t{ 456 });
 	check("uint64_t to_v8 is Number", v8_uval->IsNumber());
 
 	// from_v8 accepts Number
 	auto num_val = v8::Number::New(isolate, 42.0);
-	check_eq("int64_t from Number", v8pp::from_v8<int64_t>(isolate, num_val), int64_t{42});
-	check_eq("uint64_t from Number", v8pp::from_v8<uint64_t>(isolate, num_val), uint64_t{42});
+	check_eq("int64_t from Number", v8pp::from_v8<int64_t>(isolate, num_val), int64_t{ 42 });
+	check_eq("uint64_t from Number", v8pp::from_v8<uint64_t>(isolate, num_val), uint64_t{ 42 });
 
 	// from_v8 also accepts BigInt for interop
 	auto bigint_val = v8::BigInt::New(isolate, 99);
-	check_eq("int64_t from BigInt", v8pp::from_v8<int64_t>(isolate, bigint_val), int64_t{99});
+	check_eq("int64_t from BigInt", v8pp::from_v8<int64_t>(isolate, bigint_val), int64_t{ 99 });
 
 	// from_v8 rejects non-numeric types
 	check_ex<v8pp::invalid_argument>("int64_t from string", [isolate]()
-	{
-		v8pp::from_v8<int64_t>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<int64_t>(isolate, v8pp::to_v8(isolate, "hello")); });
 	check_ex<v8pp::invalid_argument>("uint64_t from bool", [isolate]()
-	{
-		v8pp::from_v8<uint64_t>(isolate, v8pp::to_v8(isolate, true));
-	});
+		{ v8pp::from_v8<uint64_t>(isolate, v8pp::to_v8(isolate, true)); });
 
 	// try_from_v8 for int64_t
-	auto try_i64 = v8pp::try_from_v8<int64_t>(isolate, v8pp::to_v8(isolate, int64_t{-999}));
+	auto try_i64 = v8pp::try_from_v8<int64_t>(isolate, v8pp::to_v8(isolate, int64_t{ -999 }));
 	check("try int64_t valid", try_i64.has_value());
-	check_eq("try int64_t value", *try_i64, int64_t{-999});
+	check_eq("try int64_t value", *try_i64, int64_t{ -999 });
 	check("try int64_t from string", !v8pp::try_from_v8<int64_t>(isolate, v8pp::to_v8(isolate, "abc")));
 }
 
 void test_convert_set(v8::Isolate* isolate)
 {
 	// std::set round-trip
-	std::set<int> int_set{1, 2, 3, 4, 5};
+	std::set<int> int_set{ 1, 2, 3, 4, 5 };
 	auto v8_val = v8pp::to_v8(isolate, int_set);
 	check("set to_v8 is Array", v8_val->IsArray());
 	auto result = v8pp::from_v8<std::set<int>>(isolate, v8_val);
 	check_eq("set round-trip", result, int_set);
 
 	// std::unordered_set round-trip
-	std::unordered_set<std::string> str_set{"hello", "world"};
+	std::unordered_set<std::string> str_set{ "hello", "world" };
 	auto v8_str = v8pp::to_v8(isolate, str_set);
 	check("unordered_set to_v8 is Array", v8_str->IsArray());
 	auto str_result = v8pp::from_v8<std::unordered_set<std::string>>(isolate, v8_str);
@@ -763,21 +727,19 @@ void test_convert_set(v8::Isolate* isolate)
 
 	// Invalid input
 	check_ex<v8pp::invalid_argument>("set from non-array", [isolate]()
-	{
-		v8pp::from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, 42));
-	});
+		{ v8pp::from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, 42)); });
 
 	// try_from_v8
-	auto try_set = v8pp::try_from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, std::set<int>{10, 20}));
+	auto try_set = v8pp::try_from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, std::set<int>{ 10, 20 }));
 	check("try set valid", try_set.has_value());
-	check_eq("try set size", try_set->size(), size_t{2});
+	check_eq("try set size", try_set->size(), size_t{ 2 });
 	check("try set from int", !v8pp::try_from_v8<std::set<int>>(isolate, v8pp::to_v8(isolate, 42)));
 }
 
 void test_convert_pair(v8::Isolate* isolate)
 {
 	// Basic round-trip
-	std::pair<int, std::string> p{42, "hello"};
+	std::pair<int, std::string> p{ 42, "hello" };
 	auto v8_val = v8pp::to_v8(isolate, p);
 	check("pair to_v8 is Array", v8_val->IsArray());
 	auto result = v8pp::from_v8<std::pair<int, std::string>>(isolate, v8_val);
@@ -785,24 +747,20 @@ void test_convert_pair(v8::Isolate* isolate)
 	check_eq("pair second", result.second, std::string("hello"));
 
 	// pair<double, bool>
-	std::pair<double, bool> p2{3.14, true};
+	std::pair<double, bool> p2{ 3.14, true };
 	test_conv(isolate, p2);
 
 	// Invalid: non-array
 	check_ex<v8pp::invalid_argument>("pair from int", [isolate]()
-	{
-		v8pp::from_v8<std::pair<int, int>>(isolate, v8pp::to_v8(isolate, 42));
-	});
+		{ v8pp::from_v8<std::pair<int, int>>(isolate, v8pp::to_v8(isolate, 42)); });
 
 	// Invalid: wrong array length
 	check_ex<v8pp::invalid_argument>("pair from 3-element array", [isolate]()
-	{
-		v8pp::from_v8<std::pair<int, int>>(isolate, v8pp::to_v8(isolate, std::vector<int>{1, 2, 3}));
-	});
+		{ v8pp::from_v8<std::pair<int, int>>(isolate, v8pp::to_v8(isolate, std::vector<int>{ 1, 2, 3 })); });
 
 	// try_from_v8
 	auto try_pair = v8pp::try_from_v8<std::pair<int, bool>>(isolate,
-		v8pp::to_v8(isolate, std::pair<int, bool>{7, false}));
+		v8pp::to_v8(isolate, std::pair<int, bool>{ 7, false }));
 	check("try pair valid", try_pair.has_value());
 	check_eq("try pair first", try_pair->first, 7);
 	check_eq("try pair second", try_pair->second, false);
@@ -833,29 +791,27 @@ void test_convert_chrono(v8::Isolate* isolate)
 	using namespace std::chrono;
 
 	// duration: milliseconds round-trip
-	auto ms_val = milliseconds{1500};
+	auto ms_val = milliseconds{ 1500 };
 	auto v8_ms = v8pp::to_v8(isolate, ms_val);
 	check("duration to_v8 is Number", v8_ms->IsNumber());
 	auto ms_result = v8pp::from_v8<milliseconds>(isolate, v8_ms);
-	check_eq("milliseconds round-trip", ms_result.count(), int64_t{1500});
+	check_eq("milliseconds round-trip", ms_result.count(), int64_t{ 1500 });
 
 	// duration: seconds to Number (converts to ms internally)
-	auto sec_val = seconds{3};
+	auto sec_val = seconds{ 3 };
 	auto v8_sec = v8pp::to_v8(isolate, sec_val);
 	double sec_ms = v8_sec->NumberValue(isolate->GetCurrentContext()).FromJust();
 	check_eq("seconds to_v8 as ms", sec_ms, 3000.0);
 	auto sec_result = v8pp::from_v8<seconds>(isolate, v8_sec);
-	check_eq("seconds round-trip", sec_result.count(), int64_t{3});
+	check_eq("seconds round-trip", sec_result.count(), int64_t{ 3 });
 
 	// duration: microseconds
-	auto us_val = microseconds{123456};
+	auto us_val = microseconds{ 123456 };
 	test_conv(isolate, us_val);
 
 	// duration: invalid input
 	check_ex<v8pp::invalid_argument>("duration from string", [isolate]()
-	{
-		v8pp::from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, "hello")); });
 
 	// time_point: system_clock round-trip
 	auto now = system_clock::now();
@@ -876,21 +832,19 @@ void test_convert_chrono(v8::Isolate* isolate)
 
 	// time_point: invalid input
 	check_ex<v8pp::invalid_argument>("time_point from string", [isolate]()
-	{
-		v8pp::from_v8<system_clock::time_point>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<system_clock::time_point>(isolate, v8pp::to_v8(isolate, "hello")); });
 
 	// try_from_v8 for duration
-	auto try_dur = v8pp::try_from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, milliseconds{42}));
+	auto try_dur = v8pp::try_from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, milliseconds{ 42 }));
 	check("try duration valid", try_dur.has_value());
-	check_eq("try duration value", try_dur->count(), int64_t{42});
+	check_eq("try duration value", try_dur->count(), int64_t{ 42 });
 	check("try duration from string", !v8pp::try_from_v8<milliseconds>(isolate, v8pp::to_v8(isolate, "x")));
 }
 
 void test_convert_arraybuffer(v8::Isolate* isolate)
 {
 	// Basic round-trip: vector<uint8_t> -> ArrayBuffer -> vector<uint8_t>
-	std::vector<uint8_t> data{0, 1, 2, 127, 255};
+	std::vector<uint8_t> data{ 0, 1, 2, 127, 255 };
 	auto v8_val = v8pp::to_v8(isolate, data);
 	check("vector<uint8_t> to_v8 is ArrayBuffer", v8_val->IsArrayBuffer());
 	auto result = v8pp::from_v8<std::vector<uint8_t>>(isolate, v8_val);
@@ -907,7 +861,7 @@ void test_convert_arraybuffer(v8::Isolate* isolate)
 	// from_v8 from ArrayBufferView (Uint8Array)
 	{
 		v8::EscapableHandleScope scope(isolate);
-		std::vector<uint8_t> src{10, 20, 30};
+		std::vector<uint8_t> src{ 10, 20, 30 };
 		auto ab = v8pp::to_v8(isolate, src);
 		auto typed = v8::Uint8Array::New(ab.As<v8::ArrayBuffer>(), 0, 3);
 		auto view_result = v8pp::from_v8<std::vector<uint8_t>>(isolate, typed);
@@ -916,19 +870,15 @@ void test_convert_arraybuffer(v8::Isolate* isolate)
 
 	// Invalid input
 	check_ex<v8pp::invalid_argument>("vector<uint8_t> from int", [isolate]()
-	{
-		v8pp::from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, 42));
-	});
+		{ v8pp::from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, 42)); });
 	check_ex<v8pp::invalid_argument>("vector<uint8_t> from string", [isolate]()
-	{
-		v8pp::from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, "hello"));
-	});
+		{ v8pp::from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, "hello")); });
 
 	// try_from_v8
 	auto try_buf = v8pp::try_from_v8<std::vector<uint8_t>>(isolate,
-		v8pp::to_v8(isolate, std::vector<uint8_t>{5, 6, 7}));
+		v8pp::to_v8(isolate, std::vector<uint8_t>{ 5, 6, 7 }));
 	check("try arraybuffer valid", try_buf.has_value());
-	check_eq("try arraybuffer size", try_buf->size(), size_t{3});
+	check_eq("try arraybuffer size", try_buf->size(), size_t{ 3 });
 	check("try arraybuffer from string",
 		!v8pp::try_from_v8<std::vector<uint8_t>>(isolate, v8pp::to_v8(isolate, "x")));
 }
@@ -937,7 +887,7 @@ void test_convert_span(v8::Isolate* isolate)
 {
 	// span<uint8_t> -> Uint8Array
 	{
-		std::vector<uint8_t> data{1, 2, 3, 4, 5};
+		std::vector<uint8_t> data{ 1, 2, 3, 4, 5 };
 		std::span<uint8_t> sp(data);
 		auto v8_val = v8pp::to_v8(isolate, sp);
 		check("span<uint8_t> to_v8 is Uint8Array", v8_val->IsUint8Array());
@@ -948,7 +898,7 @@ void test_convert_span(v8::Isolate* isolate)
 
 	// span<int32_t> -> Int32Array
 	{
-		std::vector<int32_t> data{-1, 0, 1, 100};
+		std::vector<int32_t> data{ -1, 0, 1, 100 };
 		std::span<int32_t> sp(data);
 		auto v8_val = v8pp::to_v8(isolate, sp);
 		check("span<int32_t> to_v8 is Int32Array", v8_val->IsInt32Array());
@@ -958,7 +908,7 @@ void test_convert_span(v8::Isolate* isolate)
 
 	// span<float> -> Float32Array
 	{
-		std::vector<float> data{1.0f, 2.5f, 3.14f};
+		std::vector<float> data{ 1.0f, 2.5f, 3.14f };
 		std::span<float> sp(data);
 		auto v8_val = v8pp::to_v8(isolate, sp);
 		check("span<float> to_v8 is Float32Array", v8_val->IsFloat32Array());
@@ -968,7 +918,7 @@ void test_convert_span(v8::Isolate* isolate)
 
 	// span<double> -> Float64Array
 	{
-		std::vector<double> data{1.0, 2.0};
+		std::vector<double> data{ 1.0, 2.0 };
 		std::span<double> sp(data);
 		auto v8_val = v8pp::to_v8(isolate, sp);
 		check("span<double> to_v8 is Float64Array", v8_val->IsFloat64Array());
@@ -980,12 +930,12 @@ void test_convert_span(v8::Isolate* isolate)
 		auto v8_val = v8pp::to_v8(isolate, empty);
 		check("empty span to_v8 is Uint8Array", v8_val->IsUint8Array());
 		auto view = v8_val.As<v8::Uint8Array>();
-		check_eq("empty span length", static_cast<size_t>(view->Length()), size_t{0});
+		check_eq("empty span length", static_cast<size_t>(view->Length()), size_t{ 0 });
 	}
 
 	// span data is copied (modifying original doesn't affect JS)
 	{
-		std::vector<int32_t> data{10, 20, 30};
+		std::vector<int32_t> data{ 10, 20, 30 };
 		std::span<int32_t> sp(data);
 		auto v8_val = v8pp::to_v8(isolate, sp);
 		data[0] = 999; // modify original
@@ -1006,10 +956,20 @@ void test_convert()
 	test_conv(isolate, 2.2);
 	test_conv(isolate, true);
 
-	enum old_enum { A = 1, B = 5, C = -1 };
+	enum old_enum
+	{
+		A = 1,
+		B = 5,
+		C = -1
+	};
 	test_conv(isolate, B);
 
-	enum class new_enum { X = 'a', Y = 'b', Z = 'c' };
+	enum class new_enum
+	{
+		X = 'a',
+		Y = 'b',
+		Z = 'c'
+	};
 	test_conv(isolate, new_enum::Z);
 
 	test_string_conv(isolate, "qaz");
@@ -1028,10 +988,9 @@ void test_convert()
 	const std::array<int, 3> array{ 1, 2, 3 };
 	test_conv(isolate, array);
 	check_ex<std::runtime_error>("wrong array length", [isolate, &array]()
-	{
+		{
 		v8::Local<v8::Array> arr = v8pp::to_v8(isolate, array);
-		v8pp::from_v8<std::array<int, 2>>(isolate, arr);
-	});
+		v8pp::from_v8<std::array<int, 2>>(isolate, arr); });
 
 	test_conv(isolate, std::map<char, int>{ { 'a', 1 }, { 'b', 2 }, { 'c', 3 } });
 	test_conv(isolate, std::multimap<int, int>{ { 1, -1 }, { 2, -2 } });

@@ -9,7 +9,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dorny/paths-filter@v3
+      id: filter
+      with:
+        filters: |
+          code:
+            - 'v8pp/**'
+            - 'test/**'
+            - 'plugins/**'
+            - 'examples/**'
+            - 'CMakeLists.txt'
+            - 'cmake/**'
+            - '.github/workflows/**'
+
+  format:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install clang-format-19
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+        echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | sudo tee /etc/apt/sources.list.d/llvm-19.list
+        sudo apt-get update && sudo apt-get install -y clang-format-19
+    - name: Check formatting with clang-format
+      run: |
+        find v8pp test plugins \
+          -path '*/out/*' -prune -o \
+          \( -name '*.hpp' -o -name '*.cpp' -o -name '*.ipp' \) -print | \
+          xargs clang-format-19 --dry-run --Werror
+
   build:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -36,7 +75,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install V8 apt 
+    - name: Install V8 apt
       if: startsWith(matrix.os, 'ubuntu')
       run: sudo apt update && sudo apt install libv8-dev -y
 
@@ -67,8 +106,22 @@ jobs:
     - name: Install ninja-build tool
       uses: seanmiddleditch/gha-setup-ninja@v5
 
+    - name: Set up ccache
+      if: ${{ !startsWith(matrix.os, 'windows') }}
+      uses: hendrikmuhs/ccache-action@v1
+      with:
+        key: ${{matrix.os}}-${{matrix.shared_lib}}-${{matrix.header_only}}
+
     - name: Configure CMake
-      run: cmake -G Ninja -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{matrix.build_type}} -DBUILD_TESTING=TRUE -DBUILD_SHARED_LIBS=${{matrix.shared_lib}} -DV8PP_HEADER_ONLY=${{matrix.header_only}} -DV8_COMPRESS_POINTERS=${{matrix.v8_compress_pointers}} -DV8_ENABLE_SANDBOX=${{matrix.v8_enable_sandbox}}
+      run: >
+        cmake -G Ninja -B ${{github.workspace}}/build
+        -DCMAKE_BUILD_TYPE=${{matrix.build_type}}
+        -DBUILD_TESTING=TRUE
+        -DBUILD_SHARED_LIBS=${{matrix.shared_lib}}
+        -DV8PP_HEADER_ONLY=${{matrix.header_only}}
+        -DV8_COMPRESS_POINTERS=${{matrix.v8_compress_pointers}}
+        -DV8_ENABLE_SANDBOX=${{matrix.v8_enable_sandbox}}
+        ${{ !startsWith(matrix.os, 'windows') && '-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache' || '' }}
 
     - name: Build
       run: cmake --build ${{github.workspace}}/build --config ${{matrix.build_type}}

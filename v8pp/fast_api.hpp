@@ -40,19 +40,27 @@ constexpr bool is_fast_arg_type_v =
 
 /// Check if a function signature is Fast API compatible
 template<typename F>
-struct is_fast_api_compatible : std::false_type {};
+struct is_fast_api_compatible : std::false_type
+{
+};
 
 template<typename R, typename... Args>
-struct is_fast_api_compatible<R(*)(Args...)>
-	: std::bool_constant<is_fast_return_type_v<R> && (is_fast_arg_type_v<Args> && ...)> {};
+struct is_fast_api_compatible<R (*)(Args...)>
+	: std::bool_constant<is_fast_return_type_v<R> && (is_fast_arg_type_v<Args> && ...)>
+{
+};
 
 template<typename R, typename C, typename... Args>
-struct is_fast_api_compatible<R(C::*)(Args...)>
-	: std::bool_constant<is_fast_return_type_v<R> && (is_fast_arg_type_v<Args> && ...)> {};
+struct is_fast_api_compatible<R (C::*)(Args...)>
+	: std::bool_constant<is_fast_return_type_v<R> && (is_fast_arg_type_v<Args> && ...)>
+{
+};
 
 template<typename R, typename C, typename... Args>
-struct is_fast_api_compatible<R(C::*)(Args...) const>
-	: std::bool_constant<is_fast_return_type_v<R> && (is_fast_arg_type_v<Args> && ...)> {};
+struct is_fast_api_compatible<R (C::*)(Args...) const>
+	: std::bool_constant<is_fast_return_type_v<R> && (is_fast_arg_type_v<Args> && ...)>
+{
+};
 
 #ifdef V8PP_HAS_FAST_API_HEADER
 
@@ -62,7 +70,7 @@ template<auto FuncPtr>
 struct fast_callback;
 
 /// Free function: R(*)(Args...)
-template<typename R, typename... Args, R(*FuncPtr)(Args...)>
+template<typename R, typename... Args, R (*FuncPtr)(Args...)>
 struct fast_callback<FuncPtr>
 {
 	static R call(v8::Local<v8::Object> /*receiver*/, Args... args,
@@ -73,7 +81,7 @@ struct fast_callback<FuncPtr>
 };
 
 /// Member function: R(C::*)(Args...) — extracts C++ object from receiver internal field 0
-template<typename R, typename C, typename... Args, R(C::*MemPtr)(Args...)>
+template<typename R, typename C, typename... Args, R (C::*MemPtr)(Args...)>
 struct fast_callback<MemPtr>
 {
 	static R call(v8::Local<v8::Object> receiver, Args... args,
@@ -87,15 +95,17 @@ struct fast_callback<MemPtr>
 #else
 			options.fallback = true;
 #endif
-			if constexpr (std::is_void_v<R>) return;
-			else return R{};
+			if constexpr (std::is_void_v<R>)
+				return;
+			else
+				return R{};
 		}
 		return (static_cast<C*>(ptr)->*MemPtr)(args...);
 	}
 };
 
 /// Const member function: R(C::*)(Args...) const
-template<typename R, typename C, typename... Args, R(C::*MemPtr)(Args...) const>
+template<typename R, typename C, typename... Args, R (C::*MemPtr)(Args...) const>
 struct fast_callback<MemPtr>
 {
 	static R call(v8::Local<v8::Object> receiver, Args... args,
@@ -109,8 +119,10 @@ struct fast_callback<MemPtr>
 #else
 			options.fallback = true;
 #endif
-			if constexpr (std::is_void_v<R>) return;
-			else return R{};
+			if constexpr (std::is_void_v<R>)
+				return;
+			else
+				return R{};
 		}
 		return (static_cast<C const*>(ptr)->*MemPtr)(args...);
 	}
@@ -122,7 +134,9 @@ struct fast_callback<MemPtr>
 
 /// Tag to detect fast_function types
 template<typename T>
-struct is_fast_function : std::false_type {};
+struct is_fast_function : std::false_type
+{
+};
 
 /// Compile-time Fast API function wrapper.
 /// Wraps a function pointer as a non-type template parameter to enable V8 Fast API callbacks.
@@ -138,7 +152,9 @@ struct fast_function
 };
 
 template<auto FuncPtr>
-struct is_fast_function<fast_function<FuncPtr>> : std::true_type {};
+struct is_fast_function<fast_function<FuncPtr>> : std::true_type
+{
+};
 
 /// Variable template for convenient use
 template<auto FuncPtr>

@@ -8,11 +8,20 @@
 
 static std::string var;
 
-static int fun(int x) { return x + 1; }
+static int fun(int x)
+{
+	return x + 1;
+}
 
 static int x = 1;
-static int get_x() { return x + 1; }
-static void set_x(int v) { x = v - 1; }
+static int get_x()
+{
+	return x + 1;
+}
+static void set_x(int v)
+{
+	x = v - 1;
+}
 
 static_assert(std::is_move_constructible_v<v8pp::module>);
 static_assert(std::is_move_assignable_v<v8pp::module>);
@@ -33,8 +42,7 @@ void test_module()
 		.const_("char", 'Z')
 		.const_("int", 100)
 		.const_("str", "str")
-		.const_("num", 99.9)
-		;
+		.const_("num", 99.9);
 
 	module
 		.submodule("consts", consts)
@@ -42,8 +50,7 @@ void test_module()
 		.function("fun", &fun)
 		.value("empty", v8::Null(context.isolate()))
 		.property("rprop", get_x)
-		.property("wprop", get_x, set_x)
-		;
+		.property("wprop", get_x, set_x);
 
 	context.module("module", module);
 
@@ -56,8 +63,7 @@ void test_module()
 	check_eq("module.consts.str",
 		run_script<std::string>(context, "module.consts.str"), "str");
 
-	check_eq("module.var", run_script<std::string>(context,
-		"module.var = 'test'; module.var"), "test");
+	check_eq("module.var", run_script<std::string>(context, "module.var = 'test'; module.var"), "test");
 	check_eq("var", var, "test");
 
 	check_eq("module.fun",

@@ -1,9 +1,17 @@
 #include "v8pp/type_info.hpp"
 #include "test.hpp"
 
-struct some_struct {};
-namespace test { class some_class {}; }
-namespace { using other_class = test::some_class; }
+struct some_struct
+{
+};
+namespace test {
+class some_class
+{
+};
+} // namespace test
+namespace {
+using other_class = test::some_class;
+}
 
 void test_type_info()
 {

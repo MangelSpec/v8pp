@@ -52,16 +52,56 @@ struct convert
 
 // typed_array_trait specializations (requires V8 types)
 namespace detail {
-template<> struct typed_array_trait<uint8_t>  { using type = v8::Uint8Array; };
-template<> struct typed_array_trait<int8_t>   { using type = v8::Int8Array; };
-template<> struct typed_array_trait<uint16_t> { using type = v8::Uint16Array; };
-template<> struct typed_array_trait<int16_t>  { using type = v8::Int16Array; };
-template<> struct typed_array_trait<uint32_t> { using type = v8::Uint32Array; };
-template<> struct typed_array_trait<int32_t>  { using type = v8::Int32Array; };
-template<> struct typed_array_trait<float>    { using type = v8::Float32Array; };
-template<> struct typed_array_trait<double>   { using type = v8::Float64Array; };
-template<> struct typed_array_trait<int64_t>  { using type = v8::BigInt64Array; };
-template<> struct typed_array_trait<uint64_t> { using type = v8::BigUint64Array; };
+template<>
+struct typed_array_trait<uint8_t>
+{
+	using type = v8::Uint8Array;
+};
+template<>
+struct typed_array_trait<int8_t>
+{
+	using type = v8::Int8Array;
+};
+template<>
+struct typed_array_trait<uint16_t>
+{
+	using type = v8::Uint16Array;
+};
+template<>
+struct typed_array_trait<int16_t>
+{
+	using type = v8::Int16Array;
+};
+template<>
+struct typed_array_trait<uint32_t>
+{
+	using type = v8::Uint32Array;
+};
+template<>
+struct typed_array_trait<int32_t>
+{
+	using type = v8::Int32Array;
+};
+template<>
+struct typed_array_trait<float>
+{
+	using type = v8::Float32Array;
+};
+template<>
+struct typed_array_trait<double>
+{
+	using type = v8::Float64Array;
+};
+template<>
+struct typed_array_trait<int64_t>
+{
+	using type = v8::BigInt64Array;
+};
+template<>
+struct typed_array_trait<uint64_t>
+{
+	using type = v8::BigUint64Array;
+};
 } // namespace detail
 
 struct invalid_argument : std::invalid_argument
@@ -76,7 +116,7 @@ struct runtime_error : std::runtime_error
 
 // converter specializations for string types
 template<typename String>
-	requires detail::is_string<String>::value
+requires detail::is_string<String>::value
 struct convert<String, void>
 {
 	using Char = typename String::value_type;
@@ -130,13 +170,15 @@ struct convert<String, void>
 		{
 			return v8::String::NewFromUtf8(isolate,
 				reinterpret_cast<char const*>(value.data()),
-				v8::NewStringType::kNormal, static_cast<int>(value.size())).ToLocalChecked();
+				v8::NewStringType::kNormal, static_cast<int>(value.size()))
+				.ToLocalChecked();
 		}
 		else
 		{
 			return v8::String::NewFromTwoByte(isolate,
 				reinterpret_cast<uint16_t const*>(value.data()),
-				v8::NewStringType::kNormal, static_cast<int>(value.size())).ToLocalChecked();
+				v8::NewStringType::kNormal, static_cast<int>(value.size()))
+				.ToLocalChecked();
 		}
 	}
 
@@ -281,7 +323,7 @@ struct convert<bool>
 
 // convert Number <-> integer types that fit in 32 bits
 template<std::integral T>
-	requires (sizeof(T) <= sizeof(uint32_t))
+requires(sizeof(T) <= sizeof(uint32_t))
 struct convert<T, void>
 {
 	using from_type = T;
@@ -330,7 +372,7 @@ struct convert<T, void>
 // values > 2^53, but this covers all practical use cases (timestamps, counters, IDs).
 // from_v8 accepts both Number and BigInt for interop.
 template<std::integral T>
-	requires (sizeof(T) > sizeof(uint32_t))
+requires(sizeof(T) > sizeof(uint32_t))
 struct convert<T, void>
 {
 	using from_type = T;
@@ -377,7 +419,7 @@ struct convert<T, void>
 };
 
 template<typename T>
-	requires std::is_enum_v<T>
+requires std::is_enum_v<T>
 struct convert<T, void>
 {
 	using underlying_type = typename std::underlying_type<T>::type;
@@ -398,7 +440,7 @@ struct convert<T, void>
 	static std::optional<from_type> try_from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
 		auto result = convert<underlying_type>::try_from_v8(isolate, value);
-		return result ? std::optional<from_type>{static_cast<T>(*result)} : std::nullopt;
+		return result ? std::optional<from_type>{ static_cast<T>(*result) } : std::nullopt;
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, T value)
@@ -451,7 +493,7 @@ struct convert<std::optional<T>>
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
-	    if (value.IsEmpty() || value->IsNullOrUndefined())
+		if (value.IsEmpty() || value->IsNullOrUndefined())
 		{
 			return std::nullopt;
 		}
@@ -461,7 +503,7 @@ struct convert<std::optional<T>>
 		}
 		else
 		{
-		    throw invalid_argument(isolate, value, "Optional");
+			throw invalid_argument(isolate, value, "Optional");
 		}
 	}
 
@@ -469,11 +511,11 @@ struct convert<std::optional<T>>
 	{
 		if (value.IsEmpty() || value->IsNullOrUndefined())
 		{
-			return from_type{std::nullopt};
+			return from_type{ std::nullopt };
 		}
 		if (convert<T>::is_valid(isolate, value))
 		{
-			return from_type{convert<T>::from_v8(isolate, value)};
+			return from_type{ convert<T>::from_v8(isolate, value) };
 		}
 		return std::nullopt;
 	}
@@ -502,8 +544,7 @@ struct convert<std::tuple<Ts...>>
 
 	static bool is_valid(v8::Isolate*, v8::Local<v8::Value> value)
 	{
-		return !value.IsEmpty() && value->IsArray()
-			&& value.As<v8::Array>()->Length() == N;
+		return !value.IsEmpty() && value->IsArray() && value.As<v8::Array>()->Length() == N;
 	}
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
@@ -631,8 +672,7 @@ public:
 		return std::visit([isolate](auto&& v) -> v8::Local<v8::Value>
 			{
 				using T = std::decay_t<decltype(v)>;
-				return v8pp::convert<T>::to_v8(isolate, v);
-			}, value);
+				return v8pp::convert<T>::to_v8(isolate, v); }, value);
 	}
 
 private:
@@ -660,8 +700,7 @@ private:
 	static bool is_map_object(v8::Isolate* isolate, v8::Local<v8::Object> obj)
 	{
 		v8::Local<v8::Array> prop_names;
-		return obj->GetPropertyNames(isolate->GetCurrentContext()).ToLocal(&prop_names)
-			&& prop_names->Length() > 0;
+		return obj->GetPropertyNames(isolate->GetCurrentContext()).ToLocal(&prop_names) && prop_names->Length() > 0;
 	}
 
 	template<typename T, typename Number>
@@ -749,7 +788,7 @@ private:
 				// For 64-bit integrals from Number, only match if the double
 				// is an exact integer within safe range (±2^53)
 				double d = value->NumberValue(isolate->GetCurrentContext()).FromJust();
-				constexpr double safe_max = static_cast<double>(uint64_t{1} << std::numeric_limits<double>::digits);
+				constexpr double safe_max = static_cast<double>(uint64_t{ 1 } << std::numeric_limits<double>::digits);
 				if (std::isfinite(d) && d == std::trunc(d))
 				{
 					if constexpr (std::is_signed_v<T>)
@@ -797,7 +836,7 @@ private:
 
 // convert Array <-> std::array, vector, deque, list
 template<typename Sequence>
-	requires (detail::sequence<Sequence> || detail::is_array<Sequence>::value)
+requires(detail::sequence<Sequence> || detail::is_array<Sequence>::value)
 struct convert<Sequence, void>
 {
 	using from_type = Sequence;
@@ -831,9 +870,7 @@ struct convert<Sequence, void>
 			constexpr size_t length = detail::is_array<Sequence>::length;
 			if (array->Length() != length)
 			{
-				throw std::runtime_error("Invalid array length: expected "
-					+ std::to_string(length) + " actual "
-					+ std::to_string(array->Length()));
+				throw std::runtime_error("Invalid array length: expected " + std::to_string(length) + " actual " + std::to_string(array->Length()));
 			}
 		}
 		else if constexpr (detail::has_reserve<Sequence>::value)
@@ -861,9 +898,7 @@ struct convert<Sequence, void>
 		constexpr int max_size = std::numeric_limits<int>::max();
 		if (value.size() > max_size)
 		{
-			throw std::runtime_error("Invalid array length: actual "
-				+ std::to_string(value.size()) + " exceeds maximal "
-				+ std::to_string(max_size));
+			throw std::runtime_error("Invalid array length: actual " + std::to_string(value.size()) + " exceeds maximal " + std::to_string(max_size));
 		}
 
 		v8::EscapableHandleScope scope(isolate);
@@ -985,9 +1020,7 @@ struct convert<Set, void>
 		constexpr int max_size = std::numeric_limits<int>::max();
 		if (value.size() > static_cast<size_t>(max_size))
 		{
-			throw std::runtime_error("Invalid array length: actual "
-				+ std::to_string(value.size()) + " exceeds maximal "
-				+ std::to_string(max_size));
+			throw std::runtime_error("Invalid array length: actual " + std::to_string(value.size()) + " exceeds maximal " + std::to_string(max_size));
 		}
 
 		v8::EscapableHandleScope scope(isolate);
@@ -1011,8 +1044,7 @@ struct convert<std::pair<K, V>, void>
 
 	static bool is_valid(v8::Isolate*, v8::Local<v8::Value> value)
 	{
-		return !value.IsEmpty() && value->IsArray()
-			&& value.As<v8::Array>()->Length() == 2;
+		return !value.IsEmpty() && value->IsArray() && value.As<v8::Array>()->Length() == 2;
 	}
 
 	static from_type from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value)
@@ -1276,19 +1308,7 @@ struct convert<v8::Local<T>>
 };
 
 template<typename T>
-struct is_wrapped_class : std::conjunction<
-	std::is_class<T>,
-	std::negation<detail::is_string<T>>,
-	std::negation<detail::is_mapping<T>>,
-	std::negation<detail::is_sequence<T>>,
-	std::negation<detail::is_array<T>>,
-	std::negation<detail::is_tuple<T>>,
-	std::negation<detail::is_shared_ptr<T>>,
-	std::negation<detail::is_optional<T>>,
-	std::negation<detail::is_set<T>>,
-	std::negation<detail::is_pair<T>>,
-	std::negation<detail::is_duration<T>>,
-	std::negation<detail::is_time_point<T>>>
+struct is_wrapped_class : std::conjunction<std::is_class<T>, std::negation<detail::is_string<T>>, std::negation<detail::is_mapping<T>>, std::negation<detail::is_sequence<T>>, std::negation<detail::is_array<T>>, std::negation<detail::is_tuple<T>>, std::negation<detail::is_shared_ptr<T>>, std::negation<detail::is_optional<T>>, std::negation<detail::is_set<T>>, std::negation<detail::is_pair<T>>, std::negation<detail::is_duration<T>>, std::negation<detail::is_time_point<T>>>
 {
 };
 
@@ -1314,7 +1334,7 @@ struct is_wrapped_class<std::filesystem::path> : std::false_type
 };
 
 template<typename T>
-	requires is_wrapped_class<T>::value
+requires is_wrapped_class<T>::value
 struct convert<T*, void>
 {
 	using from_type = T*;
@@ -1339,7 +1359,7 @@ struct convert<T*, void>
 	{
 		// from_v8 returns nullptr without throwing on failure
 		auto ptr = from_v8(isolate, value);
-		return ptr ? std::optional<from_type>{ptr} : std::nullopt;
+		return ptr ? std::optional<from_type>{ ptr } : std::nullopt;
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, T const* value)
@@ -1349,7 +1369,7 @@ struct convert<T*, void>
 };
 
 template<typename T>
-	requires is_wrapped_class<T>::value
+requires is_wrapped_class<T>::value
 struct convert<T, void>
 {
 	using from_type = T&;
@@ -1379,7 +1399,7 @@ struct convert<T, void>
 	{
 		if (value.IsEmpty() || !value->IsObject()) return std::nullopt;
 		T* object = class_<class_type, raw_ptr_traits>::unwrap_object(isolate, value);
-		return object ? std::optional<class_type>{*object} : std::nullopt;
+		return object ? std::optional<class_type>{ *object } : std::nullopt;
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, T const& value)
@@ -1391,7 +1411,7 @@ struct convert<T, void>
 };
 
 template<typename T>
-	requires is_wrapped_class<T>::value
+requires is_wrapped_class<T>::value
 struct convert<std::shared_ptr<T>, void>
 {
 	using from_type = std::shared_ptr<T>;
@@ -1416,7 +1436,7 @@ struct convert<std::shared_ptr<T>, void>
 	{
 		// from_v8 returns empty shared_ptr without throwing on failure
 		auto ptr = from_v8(isolate, value);
-		return ptr ? std::optional<from_type>{std::move(ptr)} : std::nullopt;
+		return ptr ? std::optional<from_type>{ std::move(ptr) } : std::nullopt;
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, std::shared_ptr<T> const& value)
@@ -1446,7 +1466,7 @@ struct convert<T, ref_from_shared_ptr>
 		std::shared_ptr<T> object = class_<class_type, shared_ptr_traits>::unwrap_object(isolate, value);
 		if (object)
 		{
-			//assert(object.use_count() > 1);
+			// assert(object.use_count() > 1);
 			return *object;
 		}
 		throw std::runtime_error("failed to unwrap C++ object");
@@ -1456,7 +1476,7 @@ struct convert<T, ref_from_shared_ptr>
 	{
 		if (value.IsEmpty() || !value->IsObject()) return std::nullopt;
 		std::shared_ptr<T> object = class_<class_type, shared_ptr_traits>::unwrap_object(isolate, value);
-		return object ? std::optional<class_type>{*object} : std::nullopt;
+		return object ? std::optional<class_type>{ *object } : std::nullopt;
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, T const& value)
@@ -1490,7 +1510,8 @@ auto from_v8(v8::Isolate* isolate, v8::Local<v8::Value> value, U const& default_
 {
 	using return_type = decltype(convert<T>::from_v8(isolate, value));
 	return convert<T>::is_valid(isolate, value) ?
-		convert<T>::from_v8(isolate, value) : static_cast<return_type>(default_value);
+		convert<T>::from_v8(isolate, value) :
+		static_cast<return_type>(default_value);
 }
 
 namespace detail {
@@ -1503,7 +1524,7 @@ auto try_from_v8_fallback(v8::Isolate* isolate, v8::Local<v8::Value> value)
 {
 	using result_type = std::decay_t<typename convert<T>::from_type>;
 	if (!convert<T>::is_valid(isolate, value)) return std::optional<result_type>{};
-	return std::optional<result_type>{convert<T>::from_v8(isolate, value)};
+	return std::optional<result_type>{ convert<T>::from_v8(isolate, value) };
 }
 
 } // namespace detail
@@ -1581,7 +1602,8 @@ v8::Local<v8::String> to_v8(v8::Isolate* isolate,
 inline v8::Local<v8::String> to_v8_name(v8::Isolate* isolate, std::string_view name)
 {
 	return v8::String::NewFromUtf8(isolate, name.data(),
-		v8::NewStringType::kInternalized, static_cast<int>(name.size())).ToLocalChecked();
+		v8::NewStringType::kInternalized, static_cast<int>(name.size()))
+		.ToLocalChecked();
 }
 
 template<typename T>
@@ -1637,17 +1659,12 @@ v8::Local<T> to_local(v8::Isolate* isolate, v8::PersistentBase<T> const& handle)
 }
 
 inline invalid_argument::invalid_argument(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* expected_type)
-	: std::invalid_argument(std::string("expected ")
-		+ expected_type
-		+ ", typeof="
-		+ (value.IsEmpty() ? std::string("<empty>") : v8pp::from_v8<std::string>(isolate, value->TypeOf(isolate))))
+	: std::invalid_argument(std::string("expected ") + expected_type + ", typeof=" + (value.IsEmpty() ? std::string("<empty>") : v8pp::from_v8<std::string>(isolate, value->TypeOf(isolate))))
 {
 }
 
 inline runtime_error::runtime_error(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* message)
-	: std::runtime_error(std::string("runtime error: ") + message
-		+ ", typeof="
-		+ (value.IsEmpty() ? std::string("<empty>") : v8pp::from_v8<std::string>(isolate, value->TypeOf(isolate))))
+	: std::runtime_error(std::string("runtime error: ") + message + ", typeof=" + (value.IsEmpty() ? std::string("<empty>") : v8pp::from_v8<std::string>(isolate, value->TypeOf(isolate))))
 {
 }
 
