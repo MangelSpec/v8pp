@@ -185,4 +185,16 @@ void test_call_from_v8()
 		check_eq("ctor defaults: default used", run_script<int>(context, "var n2 = new Named('test'); n2.value"), 42);
 		check_eq("ctor defaults: name correct", run_script<std::string>(context, "n2.name"), "test");
 	}
+
+	// --- undefined triggers default (matches JS native behavior) ---
+	// In JS: function foo(a, b = 10) {} foo(1, undefined) → b is 10
+
+	check_eq("defaults: undefined uses default", run_script<int>(context, "add_default(3, undefined)"), 13);
+	check_eq("defaults: undefined middle arg", run_script<int>(context, "three_args(1, undefined, 3)"), 24);
+	check_eq("defaults: undefined last arg", run_script<int>(context, "three_args(1, 2, undefined)"), 33);
+	check_eq("defaults: both undefined", run_script<int>(context, "three_args(1, undefined, undefined)"), 51);
+
+	// String default with undefined
+	check_eq("defaults: string undefined uses default",
+		run_script<std::string>(context, "greet('world', undefined)"), "hello world");
 }

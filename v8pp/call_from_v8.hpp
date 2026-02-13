@@ -166,7 +166,7 @@ decltype(auto) arg_or_default(v8::FunctionCallbackInfo<v8::Value> const& args,
 		using arg_type = typename CallTraits::template arg_type<Index + CallTraits::offset>;
 		using value_type = std::remove_cv_t<std::remove_reference_t<arg_type>>;
 
-		if (static_cast<size_t>(args.Length()) <= Index)
+		if (static_cast<size_t>(args.Length()) <= Index || args[Index]->IsUndefined())
 		{
 			constexpr size_t def_index = Index - DefaultsStart;
 			return static_cast<value_type>(std::get<def_index>(defaults_tuple));
