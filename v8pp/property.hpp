@@ -10,33 +10,22 @@ inline constexpr bool function_with_object = std::is_member_function_pointer_v<F
 	(std::is_lvalue_reference_v<U> && std::is_base_of_v<T, std::remove_cv_t<std::remove_reference_t<U>>>);
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_getter = CallTraits::arg_count == 0 + Offset
-	&& !std::same_as<typename function_traits<F>::return_type, void>;
+inline constexpr bool is_getter = CallTraits::arg_count == 0 + Offset && !std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_direct_getter = CallTraits::arg_count == 2 + Offset
-	&& std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>>
-	&& std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::PropertyCallbackInfo<v8::Value> const&>
-	&& std::same_as<typename function_traits<F>::return_type, void>;
+inline constexpr bool is_direct_getter = CallTraits::arg_count == 2 + Offset && std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>> && std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::PropertyCallbackInfo<v8::Value> const&> && std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_isolate_getter = CallTraits::arg_count == 1 + Offset
-	&& is_first_arg_isolate<F, Offset>
-	&& !std::same_as<typename function_traits<F>::return_type, void>;
+inline constexpr bool is_isolate_getter = CallTraits::arg_count == 1 + Offset && is_first_arg_isolate<F, Offset> && !std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_setter = CallTraits::arg_count == 1 + Offset;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_direct_setter = CallTraits::arg_count == 3 + Offset
-	&& std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>>
-	&& std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>>
-	&& std::same_as<typename CallTraits::template arg_type<2 + Offset>, v8::PropertyCallbackInfo<void> const&>
-	&& std::same_as<typename function_traits<F>::return_type, void>;
+inline constexpr bool is_direct_setter = CallTraits::arg_count == 3 + Offset && std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>> && std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>> && std::same_as<typename CallTraits::template arg_type<2 + Offset>, v8::PropertyCallbackInfo<void> const&> && std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_isolate_setter = CallTraits::arg_count == 2 + Offset
-	&& is_first_arg_isolate<F, Offset>;
+inline constexpr bool is_isolate_setter = CallTraits::arg_count == 2 + Offset && is_first_arg_isolate<F, Offset>;
 
 template<typename Get, typename... ObjArg>
 void property_get(Get& getter, v8::Local<v8::Name> name,
@@ -67,7 +56,7 @@ void property_get(Get& getter, v8::Local<v8::Name> name,
 		(void)name;
 		(void)info;
 		(void)isolate;
-		//static_assert(false, "Unsupported getter type");
+		// static_assert(false, "Unsupported getter type");
 	}
 }
 
@@ -103,7 +92,7 @@ void property_set(Set& setter, v8::Local<v8::Name> name, v8::Local<v8::Value> va
 		(void)value;
 		(void)info;
 		(void)isolate;
-		//static_assert(false, "Unsupported setter type");
+		// static_assert(false, "Unsupported setter type");
 	}
 }
 
@@ -222,7 +211,7 @@ struct property<Get, detail::none, GetClass, detail::none> final
 	template<typename Traits>
 	static void set(v8::Local<v8::Name> name, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const& info)
 	{
-		//assert(false && "read-only property");
+		// assert(false && "read-only property");
 		if (info.ShouldThrowOnError())
 		{
 			info.GetIsolate()->ThrowException(v8pp::to_v8(info.GetIsolate(),

@@ -13,7 +13,8 @@ struct GCObj
 	static std::atomic<int> instance_count;
 	int value;
 
-	explicit GCObj(int v = 0) : value(v) { ++instance_count; }
+	explicit GCObj(int v = 0)
+		: value(v) { ++instance_count; }
 	~GCObj() { --instance_count; }
 
 	int get() const { return value; }
@@ -26,7 +27,8 @@ struct GCBase
 	static std::atomic<int> base_count;
 	int x;
 
-	explicit GCBase(int v = 0) : x(v) { ++base_count; }
+	explicit GCBase(int v = 0)
+		: x(v) { ++base_count; }
 	~GCBase() { --base_count; }
 
 	int get_x() const { return x; }
@@ -39,7 +41,8 @@ struct GCDerived : GCBase
 	static std::atomic<int> derived_count;
 	int y;
 
-	explicit GCDerived(int v = 0) : GCBase(v), y(v * 2) { ++derived_count; }
+	explicit GCDerived(int v = 0)
+		: GCBase(v), y(v * 2) { ++derived_count; }
 	~GCDerived() { --derived_count; }
 
 	int get_y() const { return y; }

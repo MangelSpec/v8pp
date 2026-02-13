@@ -23,8 +23,7 @@ inline bool traverse_subobjects(v8::Isolate* isolate, v8::Local<v8::Context> con
 		}
 
 		v8::Local<v8::Value> part;
-		if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part)
-			|| !part->IsObject())
+		if (!options->Get(context, v8pp::to_v8(isolate, name.substr(0, dot_pos))).ToLocal(&part) || !part->IsObject())
 		{
 			return false;
 		}
@@ -48,8 +47,7 @@ bool get_option(v8::Isolate* isolate, v8::Local<v8::Object> options,
 	}
 
 	v8::Local<v8::Value> val;
-	if (!options->Get(context, v8pp::to_v8(isolate, name)).ToLocal(&val)
-		|| val->IsUndefined())
+	if (!options->Get(context, v8pp::to_v8(isolate, name)).ToLocal(&val) || val->IsUndefined())
 	{
 		return false;
 	}
@@ -102,8 +100,9 @@ bool set_option_data(v8::Isolate* isolate, v8::Local<v8::Object> options,
 	}
 
 	return options->CreateDataProperty(context,
-		v8pp::to_v8(isolate, name).As<v8::Name>(),
-		to_v8(isolate, value)).FromMaybe(false);
+					  v8pp::to_v8(isolate, name).As<v8::Name>(),
+					  to_v8(isolate, value))
+		.FromMaybe(false);
 }
 
 /// Alias for set_option_data without subobjects.
@@ -121,8 +120,9 @@ void set_const(v8::Isolate* isolate, v8::Local<v8::Object> options,
 	std::string_view name, T const& value)
 {
 	options->DefineOwnProperty(isolate->GetCurrentContext(),
-		v8pp::to_v8(isolate, name), to_v8(isolate, value),
-		v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete)).FromJust();
+			   v8pp::to_v8(isolate, name), to_v8(isolate, value),
+			   v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete))
+		.FromJust();
 }
 
 } // namespace v8pp

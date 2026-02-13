@@ -5,14 +5,29 @@
 
 namespace {
 
-int get1() { return 0; }
-int set1(int) { return 0; }
+int get1()
+{
+	return 0;
+}
+int set1(int)
+{
+	return 0;
+}
 
-bool get2(v8::Isolate*) { return false; }
-void set2(v8::Isolate*, int) {}
+bool get2(v8::Isolate*)
+{
+	return false;
+}
+void set2(v8::Isolate*, int)
+{
+}
 
-void get3(v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const&) {}
-void set3(v8::Local<v8::String>, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const&) {}
+void get3(v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const&)
+{
+}
+void set3(v8::Local<v8::String>, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const&)
+{
+}
 
 struct X
 {
@@ -27,18 +42,33 @@ struct X
 };
 
 // external accessors
-int external_get1(const X&) { return 0; }
-int external_set1(X&, int) { return 0; }
+int external_get1(const X&)
+{
+	return 0;
+}
+int external_set1(X&, int)
+{
+	return 0;
+}
 
-bool external_get2(const X&, v8::Isolate*) { return false; }
-void external_set2(X&, v8::Isolate*, int) {}
+bool external_get2(const X&, v8::Isolate*)
+{
+	return false;
+}
+void external_set2(X&, v8::Isolate*, int)
+{
+}
 
-void external_get3(const volatile X&, v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const&) {}
-void external_set3(volatile X&, v8::Local<v8::String>, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const&) {}
+void external_get3(const volatile X&, v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const&)
+{
+}
+void external_set3(volatile X&, v8::Local<v8::String>, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const&)
+{
+}
 
 using namespace v8pp::detail;
 
-//property metafunctions
+// property metafunctions
 static_assert(is_getter<decltype(&get1), 0>, "getter function");
 static_assert(is_getter<decltype(&X::get1), 0>, "getter member function");
 static_assert(is_getter<decltype(&external_get1), 1>, "getter external function");

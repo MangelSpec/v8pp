@@ -13,11 +13,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("makePromise", [](v8::Isolate* isolate) -> v8pp::promise<int>
-		{
+			{
 			v8pp::promise<int> p(isolate);
 			p.resolve(42);
-			return p;
-		});
+			return p; });
 
 		// V8 runs microtasks between top-level script evaluations.
 		// First script sets up the .then(), second script reads the result.
@@ -37,11 +36,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("strPromise", [](v8::Isolate* isolate) -> v8pp::promise<std::string>
-		{
+			{
 			v8pp::promise<std::string> p(isolate);
 			p.resolve("hello world");
-			return p;
-		});
+			return p; });
 
 		run_script<std::string>(context,
 			"var strResult = '';"
@@ -59,11 +57,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("rejectPromise", [](v8::Isolate* isolate) -> v8pp::promise<int>
-		{
+			{
 			v8pp::promise<int> p(isolate);
 			p.reject("something went wrong");
-			return p;
-		});
+			return p; });
 
 		run_script<std::string>(context,
 			"var errMsg = '';"
@@ -81,11 +78,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("rejectRaw", [](v8::Isolate* isolate) -> v8pp::promise<int>
-		{
+			{
 			v8pp::promise<int> p(isolate);
 			p.reject(v8pp::to_v8(isolate, "raw rejection"));
-			return p;
-		});
+			return p; });
 
 		run_script<std::string>(context,
 			"var rawErr = '';"
@@ -103,11 +99,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("voidPromise", [](v8::Isolate* isolate) -> v8pp::promise<void>
-		{
+			{
 			v8pp::promise<void> p(isolate);
 			p.resolve();
-			return p;
-		});
+			return p; });
 
 		run_script<std::string>(context,
 			"var voidResult = 'not called';"
@@ -125,11 +120,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("voidReject", [](v8::Isolate* isolate) -> v8pp::promise<void>
-		{
+			{
 			v8pp::promise<void> p(isolate);
 			p.reject("void error");
-			return p;
-		});
+			return p; });
 
 		run_script<std::string>(context,
 			"var voidErr = '';"
@@ -147,11 +141,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("piPromise", [](v8::Isolate* isolate) -> v8pp::promise<double>
-		{
+			{
 			v8pp::promise<double> p(isolate);
 			p.resolve(3.14159);
-			return p;
-		});
+			return p; });
 
 		run_script<std::string>(context,
 			"var piResult = 0;"
@@ -169,11 +162,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("chainPromise", [](v8::Isolate* isolate) -> v8pp::promise<int>
-		{
+			{
 			v8pp::promise<int> p(isolate);
 			p.resolve(10);
-			return p;
-		});
+			return p; });
 
 		run_script<std::string>(context,
 			"var chainResult = 0;"
@@ -193,11 +185,10 @@ void test_promise()
 		v8::HandleScope scope(isolate);
 
 		context.function("isPromiseTest", [](v8::Isolate* isolate) -> v8pp::promise<int>
-		{
+			{
 			v8pp::promise<int> p(isolate);
 			p.resolve(1);
-			return p;
-		});
+			return p; });
 
 		check_eq("is a Promise",
 			run_script<bool>(context, "isPromiseTest() instanceof Promise"),

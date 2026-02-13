@@ -19,7 +19,7 @@ public:
 	template<typename T>
 	static constexpr bool is_bitcast_allowed = sizeof(T) <= sizeof(void*) &&
 		std::is_default_constructible_v<T> &&
-		std::is_trivially_copyable_v<T>  &&
+		std::is_trivially_copyable_v<T> &&
 		// Member pointers can be null (offset 0) -> Debug check failed: (value) != nullptr.
 		!std::is_member_pointer_v<T>;
 	template<typename T>
@@ -114,11 +114,8 @@ private:
 			new (&storage) T(std::forward<T>(data));
 			pext.Reset(isolate, v8::External::New(isolate, this));
 			pext.SetWrapperClassId(external_data::class_id);
-			pext.SetWeak(this,
-				[](v8::WeakCallbackInfo<value_holder> const& info)
-				{
-					delete info.GetParameter();
-				}, v8::WeakCallbackType::kParameter);
+			pext.SetWeak(this, [](v8::WeakCallbackInfo<value_holder> const& info)
+				{ delete info.GetParameter(); }, v8::WeakCallbackType::kParameter);
 		}
 
 		~value_holder()
@@ -272,7 +269,7 @@ v8::Local<v8::FunctionTemplate> wrap_function_template(v8::Isolate* isolate, F&&
 	using Bundle = detail::function_with_defaults<F_type, Defaults>;
 	return v8::FunctionTemplate::New(isolate,
 		&detail::forward_function_with_defaults<Traits, F_type, Defaults>,
-		detail::external_data::set(isolate, Bundle{std::forward<F_type>(func), std::move(defs)}),
+		detail::external_data::set(isolate, Bundle{ std::forward<F_type>(func), std::move(defs) }),
 		v8::Local<v8::Signature>(), 0,
 		v8::ConstructorBehavior::kAllow,
 		side_effect_type);
@@ -289,10 +286,11 @@ v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view nam
 	using Bundle = detail::function_with_defaults<F_type, Defaults>;
 	v8::Local<v8::Function> fn;
 	if (!v8::Function::New(isolate->GetCurrentContext(),
-		&detail::forward_function_with_defaults<Traits, F_type, Defaults>,
-		detail::external_data::set(isolate, Bundle{std::forward<F_type>(func), std::move(defs)}),
-		0, v8::ConstructorBehavior::kAllow,
-		side_effect_type).ToLocal(&fn))
+			&detail::forward_function_with_defaults<Traits, F_type, Defaults>,
+			detail::external_data::set(isolate, Bundle{ std::forward<F_type>(func), std::move(defs) }),
+			0, v8::ConstructorBehavior::kAllow,
+			side_effect_type)
+			.ToLocal(&fn))
 	{
 		return {};
 	}
@@ -313,10 +311,11 @@ v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view nam
 	using F_type = typename std::decay_t<F>;
 	v8::Local<v8::Function> fn;
 	if (!v8::Function::New(isolate->GetCurrentContext(),
-		&detail::forward_function<Traits, F_type>,
-		detail::external_data::set(isolate, std::forward<F_type>(func)),
-		0, v8::ConstructorBehavior::kAllow,
-		side_effect_type).ToLocal(&fn))
+			&detail::forward_function<Traits, F_type>,
+			detail::external_data::set(isolate, std::forward<F_type>(func)),
+			0, v8::ConstructorBehavior::kAllow,
+			side_effect_type)
+			.ToLocal(&fn))
 	{
 		return {};
 	}

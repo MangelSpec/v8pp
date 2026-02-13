@@ -67,7 +67,7 @@ public:
 
 	/// Set a C++ function in the module with specified name
 	template<typename Function, typename Traits = raw_ptr_traits>
-		requires detail::is_callable<std::decay_t<Function>>::value
+	requires detail::is_callable<std::decay_t<Function>>::value
 	module& function(std::string_view name, Function&& func,
 		v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 	{
@@ -79,8 +79,7 @@ public:
 	module& function(std::string_view name, fast_function<FuncPtr>,
 		v8::SideEffectType side_effect_type = v8::SideEffectType::kHasSideEffect)
 	{
-		return value(name, wrap_function_template<FuncPtr, Traits>(isolate_,
-			fast_function<FuncPtr>{}, side_effect_type));
+		return value(name, wrap_function_template<FuncPtr, Traits>(isolate_, fast_function<FuncPtr>{}, side_effect_type));
 	}
 
 	/// Set a C++ function with default parameter values in the module
@@ -90,20 +89,16 @@ public:
 	{
 		using Fun = typename std::decay_t<Function>;
 		static_assert(detail::is_callable<Fun>::value, "Function must be callable");
-		return value(name, wrap_function_template<Function, Traits>(isolate_,
-			std::forward<Function>(func), std::move(defs), side_effect_type));
+		return value(name, wrap_function_template<Function, Traits>(isolate_, std::forward<Function>(func), std::move(defs), side_effect_type));
 	}
 
 	/// Set multiple overloaded C++ functions in the module with specified name.
 	/// F2 must be callable or an overload_entry (excludes defaults, SideEffectType, etc.)
 	template<typename F1, typename F2, typename... Fs, typename Traits = raw_ptr_traits>
-		requires (detail::is_callable<std::decay_t<F2>>::value
-			|| std::is_member_function_pointer_v<std::decay_t<F2>>
-			|| is_overload_entry<std::decay_t<F2>>::value)
+	requires(detail::is_callable<std::decay_t<F2>>::value || std::is_member_function_pointer_v<std::decay_t<F2>> || is_overload_entry<std::decay_t<F2>>::value)
 	module& function(std::string_view name, F1&& f1, F2&& f2, Fs&&... fs)
 	{
-		return value(name, wrap_overload_template<Traits>(isolate_,
-			std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
+		return value(name, wrap_overload_template<Traits>(isolate_, std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
 	}
 
 	/// Set a C++ variable in the module with specified name
@@ -133,15 +128,14 @@ public:
 
 	/// Set property in the module with specified name and get/set functions
 	template<typename GetFunction, typename SetFunction = detail::none>
-		requires (!is_fast_function<std::decay_t<GetFunction>>::value)
+	requires(!is_fast_function<std::decay_t<GetFunction>>::value)
 	module& property(char const* name, GetFunction&& get, SetFunction&& set = {})
 	{
 		using Getter = typename std::decay_t<GetFunction>;
 		using Setter = typename std::decay_t<SetFunction>;
 
 		static_assert(detail::is_callable<Getter>::value, "GetFunction must be callable");
-		static_assert(detail::is_callable<Setter>::value
-			|| std::same_as<Setter, detail::none>, "SetFunction must be callable");
+		static_assert(detail::is_callable<Setter>::value || std::same_as<Setter, detail::none>, "SetFunction must be callable");
 
 		using property_type = v8pp::property<Getter, Setter, detail::none, detail::none>;
 		using Traits = detail::none;
@@ -153,9 +147,7 @@ public:
 		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate_, property_type(std::move(get), std::move(set)));
 
-		v8::SideEffectType setter_effect = property_type::is_readonly
-			? v8::SideEffectType::kHasSideEffect
-			: v8::SideEffectType::kHasSideEffectToReceiver;
+		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
 			v8::PropertyAttribute::DontDelete,

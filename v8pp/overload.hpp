@@ -10,16 +10,24 @@ namespace v8pp {
 
 /// Compile-time overload selector for free functions
 template<typename Sig>
-constexpr auto overload(Sig* f) -> Sig* { return f; }
+constexpr auto overload(Sig* f) -> Sig*
+{
+	return f;
+}
 
 /// Compile-time overload selector for member function pointers
 template<typename MemFn>
-	requires std::is_member_function_pointer_v<MemFn>
-constexpr MemFn overload(MemFn f) { return f; }
+requires std::is_member_function_pointer_v<MemFn>
+constexpr MemFn overload(MemFn f)
+{
+	return f;
+}
 
 /// Tag to detect overload_entry types
 template<typename T>
-struct is_overload_entry : std::false_type {};
+struct is_overload_entry : std::false_type
+{
+};
 
 /// An overload entry bundling one function, optionally with defaults
 template<typename F, typename Defaults = void>
@@ -36,14 +44,16 @@ struct overload_entry<F, defaults<Defs...>>
 };
 
 template<typename F, typename D>
-struct is_overload_entry<overload_entry<F, D>> : std::true_type {};
+struct is_overload_entry<overload_entry<F, D>> : std::true_type
+{
+};
 
 /// Helper: wrap a function with defaults into an overload_entry
 template<typename F, typename... Defs>
 auto with_defaults(F&& func, defaults<Defs...> defs)
 {
 	using F_type = std::decay_t<F>;
-	return overload_entry<F_type, defaults<Defs...>>{std::forward<F>(func), std::move(defs)};
+	return overload_entry<F_type, defaults<Defs...>>{ std::forward<F>(func), std::move(defs) };
 }
 
 } // namespace v8pp
@@ -97,8 +107,9 @@ bool check_arg_types(v8::Isolate* isolate, v8::FunctionCallbackInfo<v8::Value> c
 	using traits = call_from_v8_traits<F, Offset>;
 	// Only validate args that were actually provided by JS
 	return ((Indices >= provided_count ||
-		arg_type_matches<typename traits::template arg_type<Indices + Offset>, Traits>(
-			isolate, args[Indices])) && ...);
+				arg_type_matches<typename traits::template arg_type<Indices + Offset>, Traits>(
+					isolate, args[Indices])) &&
+		...);
 }
 
 /// Check if JS args match a function's expected types (arity already validated)
@@ -260,7 +271,7 @@ void forward_overloaded_function(v8::FunctionCallbackInfo<v8::Value> const& args
 	std::string errors;
 
 	std::apply([&](auto const&... entries)
-	{
+		{
 		// Fold: short-circuit on first match via (matched || try_one())
 		((matched || [&]
 		{
@@ -289,8 +300,7 @@ void forward_overloaded_function(v8::FunctionCallbackInfo<v8::Value> const& args
 				errors += ex.what();
 				return false;
 			}
-		}()), ...);
-	}, set.entries);
+		}()), ...); }, set.entries);
 
 	if (!matched)
 	{
@@ -313,7 +323,7 @@ auto make_overload_entry(F&& func)
 	}
 	else
 	{
-		return overload_entry<std::decay_t<F>, void>{std::forward<F>(func)};
+		return overload_entry<std::decay_t<F>, void>{ std::forward<F>(func) };
 	}
 }
 
@@ -326,7 +336,7 @@ template<typename Traits = raw_ptr_traits, typename... Funcs>
 v8::Local<v8::FunctionTemplate> wrap_overload_template(v8::Isolate* isolate, Funcs&&... funcs)
 {
 	using Set = detail::overload_set<decltype(detail::make_overload_entry(std::forward<Funcs>(funcs)))...>;
-	Set set{std::make_tuple(detail::make_overload_entry(std::forward<Funcs>(funcs))...)};
+	Set set{ std::make_tuple(detail::make_overload_entry(std::forward<Funcs>(funcs))...) };
 	return v8::FunctionTemplate::New(isolate,
 		&detail::forward_overloaded_function<Traits, Set>,
 		detail::external_data::set(isolate, std::move(set)),
@@ -340,13 +350,14 @@ template<typename Traits = raw_ptr_traits, typename... Funcs>
 v8::Local<v8::Function> wrap_overload(v8::Isolate* isolate, std::string_view name, Funcs&&... funcs)
 {
 	using Set = detail::overload_set<decltype(detail::make_overload_entry(std::forward<Funcs>(funcs)))...>;
-	Set set{std::make_tuple(detail::make_overload_entry(std::forward<Funcs>(funcs))...)};
+	Set set{ std::make_tuple(detail::make_overload_entry(std::forward<Funcs>(funcs))...) };
 	v8::Local<v8::Function> fn;
 	if (!v8::Function::New(isolate->GetCurrentContext(),
-		&detail::forward_overloaded_function<Traits, Set>,
-		detail::external_data::set(isolate, std::move(set)),
-		0, v8::ConstructorBehavior::kAllow,
-		v8::SideEffectType::kHasSideEffect).ToLocal(&fn))
+			&detail::forward_overloaded_function<Traits, Set>,
+			detail::external_data::set(isolate, std::move(set)),
+			0, v8::ConstructorBehavior::kAllow,
+			v8::SideEffectType::kHasSideEffect)
+			.ToLocal(&fn))
 	{
 		return {};
 	}

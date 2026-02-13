@@ -13,7 +13,8 @@ struct Adv
 {
 	int value;
 
-	explicit Adv(int v = 0) : value(v) {}
+	explicit Adv(int v = 0)
+		: value(v) {}
 	int get() const { return value; }
 	void set(int v) { value = v; }
 	int add(int x) const { return value + x; }
@@ -22,7 +23,8 @@ struct Adv
 struct Adv2
 {
 	std::string name;
-	explicit Adv2(std::string n = "") : name(std::move(n)) {}
+	explicit Adv2(std::string n = "")
+		: name(std::move(n)) {}
 	std::string get_name() const { return name; }
 };
 

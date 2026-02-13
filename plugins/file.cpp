@@ -94,8 +94,7 @@ v8::Local<v8::Value> init(v8::Isolate* isolate)
 		.function("close", &file_base::close)
 		.function("good", &file_base::good)
 		.function("is_open", &file_base::is_open)
-		.function("eof", &file_base::eof)
-		;
+		.function("eof", &file_base::eof);
 
 	// .ctor<> template arguments declares types of file_writer constructor
 	// file_writer inherits from file_base_class
@@ -105,8 +104,7 @@ v8::Local<v8::Value> init(v8::Isolate* isolate)
 		.inherit<file_base>()
 		.function("open", &file_writer::open)
 		.function("print", &file_writer::print)
-		.function("println", &file_writer::println)
-		;
+		.function("println", &file_writer::println);
 
 	// .ctor<> template arguments declares types of file_reader constructor.
 	// file_base inherits from file_base_class
@@ -115,16 +113,13 @@ v8::Local<v8::Value> init(v8::Isolate* isolate)
 		.ctor<char const*>()
 		.inherit<file_base>()
 		.function("open", &file_reader::open)
-		.function("getln", &file_reader::getline)
-		;
+		.function("getln", &file_reader::getline);
 
 	// Create a module to add classes and functions to and return a
 	// new instance of the module to be embedded into the v8 context
 	v8pp::module m(isolate);
 	m.function("rename", +[](char const* src, char const* dest) -> bool
-	{
-		return std::rename(src, dest) == 0;
-	});
+		{ return std::rename(src, dest) == 0; });
 	m.class_("writer", file_writer_class);
 	m.class_("reader", file_reader_class);
 

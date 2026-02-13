@@ -12,7 +12,7 @@ unsigned version_patch();
 
 char const* build_options();
 
-}
+} // namespace v8pp
 
 #if V8PP_HEADER_ONLY
 #include "v8pp/version.ipp"

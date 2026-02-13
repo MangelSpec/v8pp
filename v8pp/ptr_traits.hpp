@@ -23,7 +23,10 @@ struct raw_ptr_traits
 	static pointer_type key(object_id id) { return id; }
 	static pointer_type const_pointer_cast(const_pointer_type ptr) { return const_cast<void*>(ptr); }
 	template<typename T, typename U>
-	static T* static_pointer_cast(U* ptr) { return static_cast<T*>(ptr); }
+	static T* static_pointer_cast(U* ptr)
+	{
+		return static_cast<T*>(ptr);
+	}
 
 	template<typename T>
 	using convert_ptr = convert<T*>;
@@ -73,10 +76,16 @@ struct shared_ptr_traits
 	using object_id = void*;
 
 	static object_id pointer_id(pointer_type const& ptr) { return ptr.get(); }
-	static pointer_type key(object_id id) { return std::shared_ptr<void>(id, [](void*) {}); }
+	static pointer_type key(object_id id)
+	{
+		return std::shared_ptr<void>(id, [](void*) {});
+	}
 	static pointer_type const_pointer_cast(const_pointer_type const& ptr) { return std::const_pointer_cast<void>(ptr); }
 	template<typename T, typename U>
-	static std::shared_ptr<T> static_pointer_cast(std::shared_ptr<U> const& ptr) { return std::static_pointer_cast<T>(ptr); }
+	static std::shared_ptr<T> static_pointer_cast(std::shared_ptr<U> const& ptr)
+	{
+		return std::static_pointer_cast<T>(ptr);
+	}
 
 	template<typename T>
 	using convert_ptr = convert<std::shared_ptr<T>>;
@@ -109,4 +118,4 @@ struct shared_ptr_traits
 	}
 };
 
-} //namespace v8pp
+} // namespace v8pp

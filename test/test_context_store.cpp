@@ -155,7 +155,7 @@ void test_context_store()
 				v8::Context::Scope context_scope(ctx.impl());
 
 				ctx.run_script("var state = 42; var config = 'hello';");
-				store.save_from(ctx.impl(), {"state", "config"});
+				store.save_from(ctx.impl(), { "state", "config" });
 			}
 			// ctx destroyed here
 
@@ -165,10 +165,11 @@ void test_context_store()
 				v8::HandleScope scope(isolate);
 				v8::Context::Scope context_scope(ctx.impl());
 
-				store.restore_to(ctx.impl(), {"state", "config"});
+				store.restore_to(ctx.impl(), { "state", "config" });
 
 				auto state = ctx.run_script("state")->Int32Value(
-					isolate->GetCurrentContext()).FromJust();
+														isolate->GetCurrentContext())
+								 .FromJust();
 				check_eq("restored state", state, 42);
 
 				auto config = v8pp::from_v8<std::string>(isolate, ctx.run_script("config"));
@@ -209,13 +210,16 @@ void test_context_store()
 
 				// Set it in the new context and verify properties
 				ctx.impl()->Global()->Set(isolate->GetCurrentContext(),
-					v8pp::to_v8(isolate, "obj"), obj).FromJust();
+										v8pp::to_v8(isolate, "obj"), obj)
+					.FromJust();
 				auto x = ctx.run_script("obj.x")->Int32Value(
-					isolate->GetCurrentContext()).FromJust();
+													isolate->GetCurrentContext())
+							 .FromJust();
 				check_eq("obj.x", x, 10);
 
 				auto y = ctx.run_script("obj.y")->Int32Value(
-					isolate->GetCurrentContext()).FromJust();
+													isolate->GetCurrentContext())
+							 .FromJust();
 				check_eq("obj.y", y, 20);
 			}
 		}
@@ -234,11 +238,11 @@ void test_context_store()
 		store.set<int>("c", 3);
 
 		// save_from with nonexistent key
-		auto saved = store.save_from(context.impl(), {"missing"});
+		auto saved = store.save_from(context.impl(), { "missing" });
 		check_eq("save nonexistent", saved, size_t(0));
 
 		// restore partial
-		auto restored = store.restore_to(context.impl(), {"a", "b"});
+		auto restored = store.restore_to(context.impl(), { "a", "b" });
 		check_eq("restore count", restored, size_t(2));
 
 		auto a = run_script<int>(context, "a");
@@ -268,7 +272,8 @@ void test_context_store()
 
 		// Verify the copy has the original value
 		context.impl()->Global()->Set(isolate->GetCurrentContext(),
-			v8pp::to_v8(isolate, "copy"), copy).FromJust();
+									v8pp::to_v8(isolate, "copy"), copy)
+			.FromJust();
 		check_eq("json copy value", run_script<int>(context, "copy.val"), 100);
 	}
 

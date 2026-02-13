@@ -48,7 +48,9 @@ static_assert(std::same_as<arg_convert<decltype(z), 1, raw_ptr_traits>, v8pp::co
 static_assert(std::same_as<arg_convert<decltype(z), 1, shared_ptr_traits>, v8pp::convert<int>>);
 
 // cv arg converters
-static void s(std::string, std::vector<int>&, std::shared_ptr<int> const&, std::string*, std::string const*) {}
+static void s(std::string, std::vector<int>&, std::shared_ptr<int> const&, std::string*, std::string const*)
+{
+}
 
 static_assert(std::same_as<arg_convert<decltype(s), 0, raw_ptr_traits>, v8pp::convert<std::string>>);
 static_assert(std::same_as<arg_convert<decltype(s), 0, shared_ptr_traits>, v8pp::convert<std::string>>);
@@ -66,7 +68,9 @@ static_assert(std::same_as<arg_convert<decltype(s), 4, raw_ptr_traits>, v8pp::co
 static_assert(std::same_as<arg_convert<decltype(s), 4, shared_ptr_traits>, v8pp::convert<std::string const*>>);
 
 // fundamental types cv arg converters
-static void t(int, char&, bool const&, float*, char const*) {}
+static void t(int, char&, bool const&, float*, char const*)
+{
+}
 
 static_assert(std::same_as<arg_convert<decltype(t), 0, raw_ptr_traits>, v8pp::convert<int>>);
 static_assert(std::same_as<arg_convert<decltype(t), 0, shared_ptr_traits>, v8pp::convert<int>>);
@@ -89,8 +93,8 @@ void test_call_from_v8()
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
-	(void)&s; //context.function("s", s);
-	(void)&t; //context.function("t", t);
+	(void)&s; // context.function("s", s);
+	(void)&t; // context.function("t", t);
 	context.function("x", x);
 	context.function("y", y);
 	context.function("z", z);
@@ -104,14 +108,20 @@ void test_call_from_v8()
 	// --- Default parameter tests ---
 
 	// Free function with 1 default
-	static auto add_default = [](int a, int b) { return a + b; };
+	static auto add_default = [](int a, int b)
+	{
+		return a + b;
+	};
 	context.function("add_default", add_default, v8pp::defaults(10));
 
 	check_eq("defaults: all args provided", run_script<int>(context, "add_default(3, 7)"), 10);
 	check_eq("defaults: 1 default used", run_script<int>(context, "add_default(5)"), 15);
 
 	// Free function with 2 defaults
-	static auto three_args = [](int a, int b, int c) { return a + b + c; };
+	static auto three_args = [](int a, int b, int c)
+	{
+		return a + b + c;
+	};
 	context.function("three_args", three_args, v8pp::defaults(20, 30));
 
 	check_eq("defaults: 2 defaults, all provided", run_script<int>(context, "three_args(1, 2, 3)"), 6);
@@ -120,18 +130,17 @@ void test_call_from_v8()
 
 	// Too few args should throw
 	check_ex<std::runtime_error>("defaults: too few args", [&context]
-	{
-		run_script<int>(context, "three_args()");
-	});
+		{ run_script<int>(context, "three_args()"); });
 
 	// Too many args should throw
 	check_ex<std::runtime_error>("defaults: too many args", [&context]
-	{
-		run_script<int>(context, "three_args(1, 2, 3, 4)");
-	});
+		{ run_script<int>(context, "three_args(1, 2, 3, 4)"); });
 
 	// String default
-	static auto greet = [](std::string name, std::string greeting) { return greeting + " " + name; };
+	static auto greet = [](std::string name, std::string greeting)
+	{
+		return greeting + " " + name;
+	};
 	context.function("greet", greet, v8pp::defaults(std::string("hello")));
 
 	check_eq("defaults: string default used", run_script<std::string>(context, "greet('world')"), "hello world");
@@ -140,7 +149,8 @@ void test_call_from_v8()
 	// Module function with defaults
 	{
 		v8pp::module m(context.isolate());
-		m.function("multiply", [](int a, int b) { return a * b; }, v8pp::defaults(2));
+		m.function("multiply", [](int a, int b)
+			{ return a * b; }, v8pp::defaults(2));
 		context.module("def_mod", m);
 
 		check_eq("module defaults: provided", run_script<int>(context, "def_mod.multiply(3, 4)"), 12);
@@ -152,7 +162,11 @@ void test_call_from_v8()
 		struct Counter
 		{
 			int value = 0;
-			int add(int n) { value += n; return value; }
+			int add(int n)
+			{
+				value += n;
+				return value;
+			}
 		};
 
 		v8pp::class_<Counter> counter_class(context.isolate());
@@ -171,7 +185,8 @@ void test_call_from_v8()
 		{
 			std::string name;
 			int value;
-			Named(std::string n, int v) : name(std::move(n)), value(v) {}
+			Named(std::string n, int v)
+				: name(std::move(n)), value(v) {}
 		};
 
 		v8pp::class_<Named> named_class(context.isolate());

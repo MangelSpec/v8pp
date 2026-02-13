@@ -132,12 +132,11 @@ struct is_array<std::array<T, N>> : std::true_type
 // is_set<T> — set-like containers (insert but not emplace_back)
 //
 template<typename T>
-concept set_like = !is_string<T>::value && !mapping<T> && !sequence<T>
-	&& requires(T t, typename T::value_type v) {
-		t.begin();
-		t.end();
-		t.insert(std::move(v));
-	};
+concept set_like = !is_string<T>::value && !mapping<T> && !sequence<T> && requires(T t, typename T::value_type v) {
+	t.begin();
+	t.end();
+	t.insert(std::move(v));
+};
 
 template<typename T>
 struct is_set : std::bool_constant<set_like<T>>
@@ -255,7 +254,7 @@ struct function_traits<none>
 };
 
 template<typename R, typename... Args>
-struct function_traits<R (Args...)>
+struct function_traits<R(Args...)>
 {
 	using return_type = R;
 	using arguments = std::tuple<Args...>;
@@ -266,14 +265,14 @@ struct function_traits<R (Args...)>
 // function pointer
 template<typename R, typename... Args>
 struct function_traits<R (*)(Args...)>
-	: function_traits<R (Args...)>
+	: function_traits<R(Args...)>
 {
 };
 
 // member function pointer
 template<typename C, typename R, typename... Args>
 struct function_traits<R (C::*)(Args...)>
-	: function_traits<R (C&, Args...)>
+	: function_traits<R(C&, Args...)>
 {
 	using class_type = C;
 	template<typename D>
@@ -283,7 +282,7 @@ struct function_traits<R (C::*)(Args...)>
 // const member function pointer
 template<typename C, typename R, typename... Args>
 struct function_traits<R (C::*)(Args...) const>
-	: function_traits<R (C const&, Args...)>
+	: function_traits<R(C const&, Args...)>
 {
 	using class_type = C const;
 	template<typename D>
@@ -293,7 +292,7 @@ struct function_traits<R (C::*)(Args...) const>
 // volatile member function pointer
 template<typename C, typename R, typename... Args>
 struct function_traits<R (C::*)(Args...) volatile>
-	: function_traits<R (C volatile&, Args...)>
+	: function_traits<R(C volatile&, Args...)>
 {
 	using class_type = C volatile;
 	template<typename D>
@@ -303,7 +302,7 @@ struct function_traits<R (C::*)(Args...) volatile>
 // const volatile member function pointer
 template<typename C, typename R, typename... Args>
 struct function_traits<R (C::*)(Args...) const volatile>
-	: function_traits<R (C const volatile&, Args...)>
+	: function_traits<R(C const volatile&, Args...)>
 {
 	using class_type = C const volatile;
 	template<typename D>
@@ -312,42 +311,42 @@ struct function_traits<R (C::*)(Args...) const volatile>
 
 // member object pointer
 template<typename C, typename R>
-struct function_traits<R (C::*)>
-	: function_traits<R (C&)>
+struct function_traits<R(C::*)>
+	: function_traits<R(C&)>
 {
 	using class_type = C;
 	template<typename D>
-	using pointer_type = R (D::*);
+	using pointer_type = R(D::*);
 };
 
 // const member object pointer
 template<typename C, typename R>
-struct function_traits<const R (C::*)>
-	: function_traits<R (C const&)>
+struct function_traits<const R(C::*)>
+	: function_traits<R(C const&)>
 {
 	using class_type = C const;
 	template<typename D>
-	using pointer_type = const R (D::*);
+	using pointer_type = const R(D::*);
 };
 
 // volatile member object pointer
 template<typename C, typename R>
-struct function_traits<volatile R (C::*)>
-	: function_traits<R (C volatile&)>
+struct function_traits<volatile R(C::*)>
+	: function_traits<R(C volatile&)>
 {
 	using class_type = C volatile;
 	template<typename D>
-	using pointer_type = volatile R (D::*);
+	using pointer_type = volatile R(D::*);
 };
 
 // const volatile member object pointer
 template<typename C, typename R>
-struct function_traits<const volatile R (C::*)>
-	: function_traits<R (C const volatile&)>
+struct function_traits<const volatile R(C::*)>
+	: function_traits<R(C const volatile&)>
 {
 	using class_type = C const volatile;
 	template<typename D>
-	using pointer_type = const volatile R (D::*);
+	using pointer_type = const volatile R(D::*);
 };
 
 // function object, std::function, lambda
@@ -378,8 +377,7 @@ struct function_traits<F&&> : function_traits<F>
 };
 
 template<typename F>
-concept callable = std::is_function_v<std::remove_pointer_t<F>>
-	|| requires { &F::operator(); };
+concept callable = std::is_function_v<std::remove_pointer_t<F>> || requires { &F::operator(); };
 
 template<typename F>
 using is_callable = std::bool_constant<callable<F>>;
@@ -388,7 +386,7 @@ template<typename F>
 inline constexpr bool is_const_member_function_v = false;
 
 template<typename F>
-	requires std::is_member_function_pointer_v<F>
+requires std::is_member_function_pointer_v<F>
 inline constexpr bool is_const_member_function_v<F> =
 	std::is_const_v<typename function_traits<F>::class_type>;
 

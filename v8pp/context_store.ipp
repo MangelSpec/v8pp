@@ -217,8 +217,7 @@ V8PP_IMPL size_t context_store::save_from(v8::Local<v8::Context> source,
 			{
 				continue;
 			}
-			if (!src_global->Get(source, v8pp::to_v8(isolate_, leaf)).ToLocal(&val)
-				|| val->IsUndefined())
+			if (!src_global->Get(source, v8pp::to_v8(isolate_, leaf)).ToLocal(&val) || val->IsUndefined())
 			{
 				continue;
 			}

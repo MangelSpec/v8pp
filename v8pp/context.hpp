@@ -85,7 +85,7 @@ public:
 
 	/// Set functions to the context global object
 	template<typename Function, typename Traits = raw_ptr_traits>
-		requires detail::is_callable<std::decay_t<Function>>::value
+	requires detail::is_callable<std::decay_t<Function>>::value
 	context& function(std::string_view name, Function&& func)
 	{
 		return value(name, wrap_function<Function, Traits>(isolate_, name, std::forward<Function>(func)));
@@ -104,19 +104,15 @@ public:
 	{
 		using Fun = typename std::decay_t<Function>;
 		static_assert(detail::is_callable<Fun>::value, "Function must be callable");
-		return value(name, wrap_function<Function, Traits>(isolate_, name,
-			std::forward<Function>(func), std::move(defs)));
+		return value(name, wrap_function<Function, Traits>(isolate_, name, std::forward<Function>(func), std::move(defs)));
 	}
 
 	/// Set multiple overloaded functions to the context global object
 	template<typename F1, typename F2, typename... Fs, typename Traits = raw_ptr_traits>
-		requires (detail::is_callable<std::decay_t<F2>>::value
-			|| std::is_member_function_pointer_v<std::decay_t<F2>>
-			|| is_overload_entry<std::decay_t<F2>>::value)
+	requires(detail::is_callable<std::decay_t<F2>>::value || std::is_member_function_pointer_v<std::decay_t<F2>> || is_overload_entry<std::decay_t<F2>>::value)
 	context& function(std::string_view name, F1&& f1, F2&& f2, Fs&&... fs)
 	{
-		return value(name, wrap_overload(isolate_, name,
-			std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
+		return value(name, wrap_overload(isolate_, name, std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
 	}
 
 	/// Set class to the context global object

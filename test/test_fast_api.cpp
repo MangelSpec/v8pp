@@ -6,14 +6,32 @@
 #include "test.hpp"
 
 // Free functions for fast API testing
-static int32_t fast_add(int32_t a, int32_t b) { return a + b; }
-static double fast_mul(double a, double b) { return a * b; }
-static bool fast_negate(bool x) { return !x; }
-static uint32_t fast_square(uint32_t x) { return x * x; }
+static int32_t fast_add(int32_t a, int32_t b)
+{
+	return a + b;
+}
+static double fast_mul(double a, double b)
+{
+	return a * b;
+}
+static bool fast_negate(bool x)
+{
+	return !x;
+}
+static uint32_t fast_square(uint32_t x)
+{
+	return x * x;
+}
 
 // Non-compatible functions (should silently fall back to slow-only)
-static std::string slow_greet(std::string name) { return "hello " + name; }
-static int isolate_func(v8::Isolate*, int x) { return x; }
+static std::string slow_greet(std::string name)
+{
+	return "hello " + name;
+}
+static int isolate_func(v8::Isolate*, int x)
+{
+	return x;
+}
 
 // Compile-time compatibility checks
 static_assert(v8pp::detail::is_fast_api_compatible<decltype(&fast_add)>::value);
@@ -121,8 +139,7 @@ void test_fast_api()
 			.var("x", &Point::x)
 			.var("y", &Point::y)
 			.property("fast_x", v8pp::fast_fn<&Point::get_x>)
-			.property("fast_xy", v8pp::fast_fn<&Point::get_x>, v8pp::fast_fn<&Point::set_x>)
-			;
+			.property("fast_xy", v8pp::fast_fn<&Point::get_x>, v8pp::fast_fn<&Point::set_x>);
 		context.class_("Point", point_class);
 
 		// Read-only fast property

@@ -13,14 +13,16 @@ struct Widget
 struct NumericValue
 {
 	double val;
-	explicit NumericValue(double v) : val(v) {}
+	explicit NumericValue(double v)
+		: val(v) {}
 	double to_number(std::string_view) const { return val; }
 };
 
 struct Tag
 {
 	std::string name;
-	explicit Tag(std::string n) : name(std::move(n)) {}
+	explicit Tag(std::string n)
+		: name(std::move(n)) {}
 };
 
 struct NumberList
@@ -95,9 +97,8 @@ void test_symbol()
 		tag_class
 			.ctor<std::string>()
 			.var("name", &Tag::name)
-			.to_primitive([](Tag const& t, std::string_view) -> std::string {
-				return t.name;
-			});
+			.to_primitive([](Tag const& t, std::string_view) -> std::string
+				{ return t.name; });
 
 		context.class_("Tag", tag_class);
 
@@ -120,7 +121,7 @@ void test_symbol()
 
 		context.class_("NumberList", nl_class);
 
-		auto* nl = new NumberList{{1, 2, 3, 4, 5}};
+		auto* nl = new NumberList{ { 1, 2, 3, 4, 5 } };
 		auto nl_obj = v8pp::class_<NumberList>::import_external(isolate, nl);
 		v8pp::set_option(isolate, context.isolate()->GetCurrentContext()->Global(), "nl", nl_obj);
 
@@ -153,7 +154,7 @@ void test_symbol()
 
 		context.class_("WordList", wl_class);
 
-		auto* wl = new WordList{{"hello", "world"}};
+		auto* wl = new WordList{ { "hello", "world" } };
 		auto wl_obj = v8pp::class_<WordList>::import_external(isolate, wl);
 		v8pp::set_option(isolate, context.isolate()->GetCurrentContext()->Global(), "wl", wl_obj);
 
@@ -176,7 +177,7 @@ void test_symbol()
 
 		context.class_("NumberList", nl_class);
 
-		auto* nl = new NumberList{{}};
+		auto* nl = new NumberList{ {} };
 		auto nl_obj = v8pp::class_<NumberList>::import_external(isolate, nl);
 		v8pp::set_option(isolate, context.isolate()->GetCurrentContext()->Global(), "empty_nl", nl_obj);
 
@@ -196,12 +197,14 @@ void test_symbol()
 		nl_class
 			.ctor<>()
 			.iterable(
-				[](NumberList const& nl) { return nl.numbers.begin(); },
-				[](NumberList const& nl) { return nl.numbers.end(); });
+				[](NumberList const& nl)
+				{ return nl.numbers.begin(); },
+				[](NumberList const& nl)
+				{ return nl.numbers.end(); });
 
 		context.class_("NumberList", nl_class);
 
-		auto* nl = new NumberList{{10, 20, 30}};
+		auto* nl = new NumberList{ { 10, 20, 30 } };
 		auto nl_obj = v8pp::class_<NumberList>::import_external(isolate, nl);
 		v8pp::set_option(isolate, context.isolate()->GetCurrentContext()->Global(), "nl2", nl_obj);
 
@@ -225,7 +228,7 @@ void test_symbol()
 
 		context.class_("NumberList", nl_class);
 
-		auto* nl = new NumberList{{1, 2}};
+		auto* nl = new NumberList{ { 1, 2 } };
 		auto nl_obj = v8pp::class_<NumberList>::import_external(isolate, nl);
 		v8pp::set_option(isolate, context.isolate()->GetCurrentContext()->Global(), "nl3", nl_obj);
 

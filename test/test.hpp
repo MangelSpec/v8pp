@@ -151,7 +151,8 @@ std::ostream& operator<<(std::ostream& os, std::pair<First, Second> const& pair)
 	return os << pair.first << ": " << pair.second;
 }
 
-template<typename Enum> requires std::is_enum_v<Enum>
+template<typename Enum>
+requires std::is_enum_v<Enum>
 std::ostream& operator<<(std::ostream& os, Enum value)
 {
 	return os << static_cast<typename std::underlying_type_t<Enum>>(value);
@@ -167,12 +168,11 @@ template<typename... Ts>
 std::ostream& operator<<(std::ostream& os, std::tuple<Ts...> const& tuple)
 {
 	std::apply([&os](auto&&... elems) mutable
-	{
+		{
 		bool first = true;
 		os << '(';
 		((os << (first ? (first = false, "") : ", ") << elems), ...);
-		os << ')';
-	}, tuple);
+		os << ')'; }, tuple);
 	return os;
 }
 

@@ -100,13 +100,20 @@ struct Y : X
 {
 	static int instance_count;
 
-	explicit Y(int x) { var = x; ++instance_count; }
+	explicit Y(int x)
+	{
+		var = x;
+		++instance_count;
+	}
 	~Y() { --instance_count; }
 
 	int useX(X& x) { return var + x.var; }
 
 	template<typename Traits, typename X_ptr = typename v8pp::class_<X, Traits>::object_pointer_type>
-	int useX_ptr(X_ptr x) { return var + x->var; }
+	int useX_ptr(X_ptr x)
+	{
+		return var + x->var;
+	}
 };
 
 int Y::instance_count = 0;
@@ -163,14 +170,18 @@ void test_class_()
 		.template ctor<v8::FunctionCallbackInfo<v8::Value> const&>(X_ctor)
 		.const_("konst", 99)
 		.var("var", &X::var)
-		//TODO: static property definition works only at the end of class_ declaration!
+		// TODO: static property definition works only at the end of class_ declaration!
 		//.static_("my_static_var", 1)
 		//.static_("my_static_const_var", 42, true)
 		.property("rprop", &X::get)
 		.property("wprop", &X::get, &X::set)
 		.property("wprop2", static_cast<x_prop_get>(&X::prop), static_cast<x_prop_set>(&X::prop))
-		.property("prop", [](X const& x) mutable { return x.var; }, [](X& x, int n) { x.var = n; })
-		.property("prop2", [](X const& x) { return x.var; }, [](X& x, int n) mutable { x.var = n; })
+		.property("prop", [](X const& x) mutable
+			{ return x.var; }, [](X& x, int n)
+			{ x.var = n; })
+		.property("prop2", [](X const& x)
+			{ return x.var; }, [](X& x, int n) mutable
+			{ x.var = n; })
 		.property("rprop_direct", &get_rprop_direct<Traits>)
 		.property("rprop_external1", &external_get1)
 		.property("rprop_external2", &external_get2)
@@ -183,12 +194,12 @@ void test_class_()
 		.function("fun3", &X::fun3)
 		.function("fun4", &X::fun4)
 		.function("static_fun", &X::static_fun)
-		.function("static_lambda", [](int x) { return x + 3; })
+		.function("static_lambda", [](int x)
+			{ return x + 3; })
 		.function("extern_fun", &extern_fun<Traits>)
 		.function("toJSON", &X::to_json)
 		.static_("my_static_var", 1)
-		.static_("my_static_const_var", 42, true)
-		;
+		.static_("my_static_const_var", 42, true);
 
 	static_assert(std::is_move_constructible_v<decltype(X_class)>);
 	static_assert(!std::is_move_assignable_v<decltype(X_class)>);
@@ -204,28 +215,20 @@ void test_class_()
 
 	auto Y_class_find = v8pp::class_<Y, Traits>::extend(isolate);
 	Y_class_find.function("toJSON", [](const v8::FunctionCallbackInfo<v8::Value>& args)
-	{
+		{
 		bool const with_functions = true;
-		args.GetReturnValue().Set(v8pp::json_object(args.GetIsolate(), args.This(), with_functions));
-	});
+		args.GetReturnValue().Set(v8pp::json_object(args.GetIsolate(), args.This(), with_functions)); });
 
 	check_ex<std::runtime_error>("already wrapped class X", [isolate]()
-	{
-		v8pp::class_<X, Traits> X_class(isolate);
-	});
+		{ v8pp::class_<X, Traits> X_class(isolate); });
 	check_ex<std::runtime_error>("already inherited class X", [&Y_class]()
-	{
-		Y_class.template inherit<X>();
-	});
+		{ Y_class.template inherit<X>(); });
 	check_ex<std::runtime_error>("unwrapped class Z", [isolate]()
-	{
-		v8pp::class_<Z, Traits>::find_object(isolate, nullptr);
-	});
+		{ v8pp::class_<Z, Traits>::find_object(isolate, nullptr); });
 
 	context
 		.class_("X", X_class)
-		.class_("Y", Y_class)
-		;
+		.class_("Y", Y_class);
 
 	check_eq("C++ exception from X ctor",
 		run_script<std::string>(context, "ret = ''; try { new X(1, 2); } catch(err) { ret = err.message; } ret"),
@@ -260,7 +263,7 @@ void test_class_()
 	check_eq("X::fun3(str)", run_script<std::string>(context, "x = new X(); x.fun3('str')"), "str1");
 	check_eq("X::fun4([foo, bar])",
 		run_script<std::vector<std::string>>(context, "x = new X(); x.fun4(['foo', 'bar'])"),
-		std::vector<std::string>{{ "foo", "bar", "1" }});
+		std::vector<std::string>{ { "foo", "bar", "1" } });
 	check_eq("X::static_fun(1)", run_script<int>(context, "X.static_fun(1)"), 1);
 	check_eq("X::static_lambda(1)", run_script<int>(context, "X.static_lambda(1)"), 4);
 	check_eq("X::extern_fun(5)", run_script<int>(context, "x = new X(); x.extern_fun(5)"), 6);
@@ -271,9 +274,7 @@ void test_class_()
 	check_eq("X::my_static_var after assign", run_script<int>(context, "X.my_static_var = 123; X.my_static_var"), 123);
 
 	check_ex<std::runtime_error>("call method with invalid instance", [&context]()
-	{
-		run_script<int>(context, "x = new X(); f = x.fun1; f(1)");
-	});
+		{ run_script<int>(context, "x = new X(); f = x.fun1; f(1)"); });
 
 	// Crash safety: method call on plain object via .call() should throw JS error, not crash
 	check_eq("method call on plain object via .call()",
@@ -311,8 +312,7 @@ void test_class_()
 
 	check_eq("JSON.stringify(X)",
 		run_script<std::string>(context, "JSON.stringify({'obj': new X(10), 'arr': [new X(11), new X(12)] })"),
-		R"({"obj":{"key":"obj","var":10},"arr":[{"key":"0","var":11},{"key":"1","var":12}]})"
-	);
+		R"({"obj":{"key":"obj","var":10},"arr":[{"key":"0","var":11},{"key":"1","var":12}]})");
 
 	// Use order-independent comparison since V8 property enumeration order
 	// on prototype templates varies across V8 versions
@@ -338,8 +338,7 @@ void test_class_()
 					&& r.arr.length === 2;
 			})()
 		)"),
-		true
-	);
+		true);
 
 	check_eq("Y object", run_script<int>(context, "y = new Y(-100); y.konst + y.var"), -1);
 
@@ -369,9 +368,7 @@ void test_class_()
 	check("unref y1_obj", v8pp::to_v8(isolate, y1).IsEmpty());
 	y1_obj.Clear();
 	check_ex<std::runtime_error>("y1 unreferenced", [isolate, &y1]()
-	{
-		v8pp::to_v8(isolate, y1);
-	});
+		{ v8pp::to_v8(isolate, y1); });
 
 	v8pp::class_<Y, Traits>::destroy_object(isolate, y2);
 	check("unref y2", !v8pp::from_v8<decltype(y2)>(isolate, y2_obj));
@@ -407,7 +404,8 @@ void test_multiple_inheritance()
 	{
 		char a = 'A';
 		int x;
-		A() : x(1) {}
+		A()
+			: x(1) {}
 		int f() { return x; }
 		void set_f(int v) { x = v; }
 
@@ -418,17 +416,20 @@ void test_multiple_inheritance()
 	{
 		char b = 'B';
 		int x;
-		B() : x(2) {}
+		B()
+			: x(2) {}
 		int g() { return x; }
 		void set_g(int v) { x = v; }
 
 		int z() const { return x; }
 	};
 
-	struct C : A, B
+	struct C : A
+		, B
 	{
 		int x;
-		C() : x(3) {}
+		C()
+			: x(3) {}
 		int h() { return x; }
 		void set_h(int v) { x = v; }
 
@@ -464,21 +465,17 @@ void test_multiple_inheritance()
 
 		.property("F", &C::f, &C::set_f)
 		.property("G", &C::g, &C::set_g)
-		.property("H", &C::h, &C::set_h)
-		;
+		.property("H", &C::h, &C::set_h);
 
 	context.class_("C", C_class);
 	check_eq("get attributes", run_script<int>(context, "c = new C(); c.xA + c.xB + c.xC"), 1 + 2 + 3);
-	check_eq("set attributes", run_script<int>(context,
-		"c = new C(); c.xA = 10; c.xB = 20; c.xC = 30; c.xA + c.xB + c.xC"), 10 + 20 + 30);
+	check_eq("set attributes", run_script<int>(context, "c = new C(); c.xA = 10; c.xB = 20; c.xC = 30; c.xA + c.xB + c.xC"), 10 + 20 + 30);
 
 	check_eq("functions", run_script<int>(context, "c = new C(); c.f() + c.g() + c.h()"), 1 + 2 + 3);
 	check_eq("z functions", run_script<int>(context, "c = new C(); c.zA() + c.zB() + c.zC()"), 1 + 2 + 3);
 
-	check_eq("rproperties", run_script<int>(context,
-		"c = new C(); c.rF + c.rG + c.rH"), 1 + 2 + 3);
-	check_eq("rwproperties", run_script<int>(context,
-		"c = new C(); c.F = 100; c.G = 200; c.H = 300; c.F + c.G + c.H"), 100 + 200 + 300);
+	check_eq("rproperties", run_script<int>(context, "c = new C(); c.rF + c.rG + c.rH"), 1 + 2 + 3);
+	check_eq("rwproperties", run_script<int>(context, "c = new C(); c.F = 100; c.G = 200; c.H = 300; c.F + c.G + c.H"), 100 + 200 + 300);
 }
 
 template<typename Traits>
@@ -517,7 +514,8 @@ void test_auto_wrap_objects()
 	struct X
 	{
 		int x;
-		explicit X(int x) : x(x) {}
+		explicit X(int x)
+			: x(x) {}
 		int get_x() const { return x; }
 	};
 
@@ -529,10 +527,12 @@ void test_auto_wrap_objects()
 	X_class
 		.template ctor<int>()
 		.auto_wrap_objects(true)
-		.property("x", &X::get_x)
-		;
+		.property("x", &X::get_x);
 
-	auto f = [](int x) { return X(x); };
+	auto f = [](int x)
+	{
+		return X(x);
+	};
 
 	context.class_("X", X_class);
 	context.function<decltype(f), Traits>("f", std::move(f));
@@ -568,8 +568,7 @@ void test_ctor_factory_defaults()
 		.ctor(make_widget, v8pp::defaults(100, 200, std::string("untitled")))
 		.var("width", &Widget::width)
 		.var("height", &Widget::height)
-		.var("label", &Widget::label)
-		;
+		.var("label", &Widget::label);
 
 	context.class_("Widget", widget_class);
 
@@ -606,9 +605,12 @@ void test_ctor_multi_dispatch()
 		int kind; // 0 = default, 1 = from radius, 2 = from w,h
 		int a, b;
 
-		Shape() : kind(0), a(0), b(0) {}
-		Shape(int radius) : kind(1), a(radius), b(radius) {}
-		Shape(int w, int h) : kind(2), a(w), b(h) {}
+		Shape()
+			: kind(0), a(0), b(0) {}
+		Shape(int radius)
+			: kind(1), a(radius), b(radius) {}
+		Shape(int w, int h)
+			: kind(2), a(w), b(h) {}
 	};
 
 	v8pp::context context;
@@ -635,8 +637,7 @@ void test_ctor_multi_dispatch()
 		.ctor(make_default, make_circle, make_rect)
 		.var("kind", &Shape::kind)
 		.var("a", &Shape::a)
-		.var("b", &Shape::b)
-		;
+		.var("b", &Shape::b);
 
 	context.class_("Shape", shape_class);
 
@@ -671,8 +672,10 @@ void test_ctor_multi_dispatch_with_defaults()
 		int mode;
 		std::string name;
 
-		Config() : mode(0), name("default") {}
-		Config(int m, std::string n) : mode(m), name(std::move(n)) {}
+		Config()
+			: mode(0), name("default") {}
+		Config(int m, std::string n)
+			: mode(m), name(std::move(n)) {}
 	};
 
 	v8pp::context context;
@@ -694,8 +697,7 @@ void test_ctor_multi_dispatch_with_defaults()
 		.ctor(make_default,
 			v8pp::with_defaults(make_full, v8pp::defaults(42, std::string("auto"))))
 		.var("mode", &Config::mode)
-		.var("name", &Config::name)
-		;
+		.var("name", &Config::name);
 
 	context.class_("Config", config_class);
 

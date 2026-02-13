@@ -100,7 +100,8 @@ void test_context()
 		{
 			v8pp::module m(isolate);
 			m.const_("value", 40);
-			m.function("func", []() { return 2; });
+			m.function("func", []()
+				{ return 2; });
 			return m.impl();
 		};
 
@@ -142,7 +143,8 @@ void test_context()
 				v8::Local<v8::Value> require_val;
 				check("get require",
 					ctx.global()->Get(isolate->GetCurrentContext(),
-						v8pp::to_v8(isolate, "require")).ToLocal(&require_val));
+									v8pp::to_v8(isolate, "require"))
+						.ToLocal(&require_val));
 				check("require is function", require_val->IsFunction());
 				require_fn.Reset(isolate, require_val.As<v8::Function>());
 			}
