@@ -60,6 +60,7 @@ set(V8PP_HEADERS
 	promise.hpp
 	property.hpp
 	ptr_traits.hpp
+	string_utils.hpp
 	throw_ex.hpp
 	type_info.hpp
 	utility.hpp
@@ -71,6 +72,7 @@ if(V8PP_HEADER_ONLY)
 		class.ipp
 		context_store.ipp
 		json.ipp
+		string_utils.ipp
 		throw_ex.ipp
 		version.ipp
 	)
@@ -81,6 +83,7 @@ else()
 		context.cpp
 		context_store.cpp
 		convert.cpp
+		string_utils.cpp
 		json.cpp
 		throw_ex.cpp
 		version.cpp
