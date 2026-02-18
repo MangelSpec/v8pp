@@ -25,6 +25,7 @@
 #include <optional>
 
 #include "v8pp/ptr_traits.hpp"
+#include "v8pp/string_utils.hpp"
 #include "v8pp/utility.hpp"
 
 namespace v8pp {
@@ -1093,10 +1094,7 @@ struct convert<std::filesystem::path, void>
 	{
 		std::string str = convert<std::string>::from_v8(isolate, value);
 #ifdef WIN32
-		int sz = MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), nullptr, 0);
-		std::wstring w(sz, 0);
-		MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), w.data(), sz);
-		return std::filesystem::path(w);
+		return std::filesystem::path(utf8_to_wide(str));
 #else
 		return std::filesystem::path(str);
 #endif
@@ -1106,14 +1104,10 @@ struct convert<std::filesystem::path, void>
 	{
 		if (auto str = convert<std::string>::try_from_v8(isolate, value))
 		{
-			std::string s = *std::move(str);
 #ifdef WIN32
-			int sz = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
-			std::wstring w(sz, 0);
-			MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), sz);
-			return std::filesystem::path(w);
+			return std::filesystem::path(utf8_to_wide(*std::move(str)));
 #else
-			return std::filesystem::path(s);
+			return std::filesystem::path(*std::move(str));
 #endif
 		}
 		return std::nullopt;
@@ -1122,11 +1116,7 @@ struct convert<std::filesystem::path, void>
 	static to_type to_v8(v8::Isolate* isolate, from_type const& value)
 	{
 #ifdef WIN32
-		std::wstring w = value.generic_wstring();
-		int sz = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-		std::string utf8(sz, 0);
-		WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), utf8.data(), sz, nullptr, nullptr);
-		return convert<std::string>::to_v8(isolate, utf8);
+		return convert<std::string>::to_v8(isolate, wide_to_utf8(value.generic_wstring()));
 #else
 		return convert<std::string>::to_v8(isolate, value.string());
 #endif
