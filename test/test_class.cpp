@@ -182,13 +182,17 @@ void test_class_()
 		.property("prop2", [](X const& x)
 			{ return x.var; }, [](X& x, int n) mutable
 			{ x.var = n; })
-		.property("rprop_direct", &get_rprop_direct<Traits>)
 		.property("rprop_external1", &external_get1)
 		.property("rprop_external2", &external_get2)
-		.property("rprop_external3", &external_get3)
 		.property("wprop_external1", &external_get1, &external_set1)
 		.property("wprop_external2", &external_get2, &external_set2)
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 9)
+		// Direct PropertyCallbackInfo getters/setters require SetAccessor,
+		// which was removed in V8 12.9 (crbug.com/336325111)
+		.property("rprop_direct", &get_rprop_direct<Traits>)
+		.property("rprop_external3", &external_get3)
 		.property("wprop_external3", &external_get3, &external_set3)
+#endif
 		.function("fun1", &X::fun1)
 		.function("fun2", &X::fun2)
 		.function("fun3", &X::fun3)
@@ -251,13 +255,15 @@ void test_class_()
 	check_eq("X::wprop2", run_script<int>(context, "x = new X(); ++x.wprop2"), 2);
 	check_eq("X::prop", run_script<int>(context, "x = new X(); x.prop += 2"), 3);
 	check_eq("X::prop2", run_script<int>(context, "x = new X(); x.prop2 += 3"), 4);
-	check_eq("X::rprop_direct", run_script<int>(context, "x = new X(); x.rprop_direct"), 1);
 	check_eq("X::rprop_external1", run_script<int>(context, "x = new X(); x.rprop_external1"), 1);
 	check_eq("X::rprop_external2", run_script<int>(context, "x = new X(); x.rprop_external2"), 1);
-	check_eq("X::rprop_external3", run_script<int>(context, "x = new X(); x.rprop_external3"), 1);
 	check_eq("X::wprop_external1", run_script<int>(context, "x = new X(); ++x.wprop_external1; x.wprop_external1"), 2);
 	check_eq("X::wprop_external2", run_script<int>(context, "x = new X(); ++x.wprop_external2; x.wprop_external2"), 2);
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 9)
+	check_eq("X::rprop_direct", run_script<int>(context, "x = new X(); x.rprop_direct"), 1);
+	check_eq("X::rprop_external3", run_script<int>(context, "x = new X(); x.rprop_external3"), 1);
 	check_eq("X::wprop_external3", run_script<int>(context, "x = new X(); ++x.wprop_external3; x.wprop_external3"), 2);
+#endif
 	check_eq("X::fun1(1)", run_script<int>(context, "x = new X(); x.fun1(1)"), 2);
 	check_eq("X::fun2(2)", run_script<float>(context, "x = new X(); x.fun2(2)"), 3);
 	check_eq("X::fun3(str)", run_script<std::string>(context, "x = new X(); x.fun3('str')"), "str1");
@@ -321,9 +327,13 @@ void test_class_()
 			(function() {
 				var s = JSON.stringify({'obj': new Y(10), 'arr': [new Y(11), new Y(12)]});
 				var r = JSON.parse(s);
-				var props = ['rprop','wprop','wprop2','prop','prop2','rprop_direct',
-					'rprop_external1','rprop_external2','rprop_external3',
-					'wprop_external1','wprop_external2','wprop_external3'];
+				var props = ['rprop','wprop','wprop2','prop','prop2',
+					'rprop_external1','rprop_external2',
+					'wprop_external1','wprop_external2')"
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 9)
+								  R"(,'rprop_direct','rprop_external3','wprop_external3')"
+#endif
+								  R"(];
 				var fns = ['fun1','fun2','fun3','fun4','static_fun','static_lambda',
 					'extern_fun','useX','useX_ptr','toJSON'];
 				function check(o, v) {
