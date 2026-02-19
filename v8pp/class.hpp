@@ -1152,7 +1152,7 @@ private:
 			auto self = unwrap_object(isolate, info.This());
 			if (!self)
 			{
-				isolate->ThrowException(throw_ex(isolate, "setting member on non-existent C++ object"));
+				throw_ex(isolate, "setting member on non-existent C++ object");
 				return;
 			}
 			Attribute ptr = detail::external_data::get<Attribute>(info.Data());
@@ -1163,7 +1163,7 @@ private:
 		{
 			if (info.ShouldThrowOnError())
 			{
-				isolate->ThrowException(throw_ex(isolate, ex.what()));
+				throw_ex(isolate, ex.what());
 			}
 			// TODO: info.GetReturnValue().Set(false);
 		}
@@ -1206,7 +1206,7 @@ private:
 			auto self = unwrap_object(isolate, args.This());
 			if (!self)
 			{
-				isolate->ThrowException(throw_ex(isolate, "setting member on non-existent C++ object"));
+				throw_ex(isolate, "setting member on non-existent C++ object");
 				return;
 			}
 			Attribute ptr = detail::external_data::get<Attribute>(args.Data());
@@ -1215,7 +1215,7 @@ private:
 		}
 		catch (std::exception const& ex)
 		{
-			isolate->ThrowException(throw_ex(isolate, ex.what()));
+			throw_ex(isolate, ex.what());
 		}
 	}
 
@@ -1300,7 +1300,7 @@ private:
 				auto obj = class_<SetClass, Traits>::unwrap_object(isolate, args.This());
 				if (!obj)
 				{
-					isolate->ThrowException(throw_ex(isolate, "setting property on non-existent C++ object"));
+					throw_ex(isolate, "setting property on non-existent C++ object");
 					return;
 				}
 				constexpr size_t offset = std::is_member_function_pointer_v<Set> ? 0 : 1;
@@ -1318,7 +1318,7 @@ private:
 		}
 		catch (std::exception const& ex)
 		{
-			args.GetIsolate()->ThrowException(throw_ex(args.GetIsolate(), ex.what()));
+			throw_ex(args.GetIsolate(), ex.what());
 		}
 	}
 #endif

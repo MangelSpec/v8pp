@@ -140,7 +140,7 @@ try
 		auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(info.GetIsolate(), info.This());
 		if (!obj)
 		{
-			info.GetIsolate()->ThrowException(throw_ex(info.GetIsolate(), "setting property on non-existent C++ object"));
+			throw_ex(info.GetIsolate(), "setting property on non-existent C++ object");
 			return;
 		}
 		property_set(property.setter, name, value, info, *obj);
@@ -150,7 +150,7 @@ catch (std::exception const& ex)
 {
 	if (info.ShouldThrowOnError())
 	{
-		info.GetIsolate()->ThrowException(throw_ex(info.GetIsolate(), ex.what()));
+		throw_ex(info.GetIsolate(), ex.what());
 	}
 	// TODO: info.GetReturnValue().Set(false);
 }
