@@ -206,12 +206,36 @@ The codebase tracks V8's evolving API with version guards:
 // V8 13.3+: New string conversion API with ExternalMemoryAccounter
 #if V8_MAJOR_VERSION > 13 || (V8_MAJOR_VERSION == 13 && V8_MINOR_VERSION >= 3)
 
-// V8 12.9+: SetAccessor removed from FunctionTemplate, use SetNativeDataProperty
+// V8 12.9+: SetAccessor removed from ObjectTemplate (crbug.com/336325111)
 // V8 12.2+: CompileModule API changes
 // V8 11.9+: Exception constructor takes options struct
 // V8 10.5+: VisitHandlesWithClassIds removed
 // V8 10.0+: Fast API callbacks available
 ```
+
+### V8 12.9+ SetAccessor Removal (Critical)
+
+V8 12.9 removed `ObjectTemplate::SetAccessor()` — a V8-specific API that created "fake data
+properties" with native callbacks. It violated the ECMAScript spec by invoking setters through
+the prototype chain (which data properties should not do).
+
+**Migration:** The V8 deprecation message says "use `SetNativeDataProperty`", but this is
+misleading. Per V8 engineer Igor Sheludko on the v8-dev mailing list:
+
+- **`SetNativeDataProperty`** — Creates a true data property. Works on `InstanceTemplate` but
+  creates **own properties** on each instance that **cannot be overridden** via
+  `Object.defineProperty` on derived prototypes. Breaks JS prototype chain semantics.
+- **`SetAccessorProperty`** (correct replacement) — Creates a proper JS accessor property
+  (get/set). Takes `FunctionTemplate` objects. Works on `PrototypeTemplate` and preserves
+  correct prototype chain semantics (properties can be shadowed by derived prototypes).
+
+v8pp uses `SetAccessorProperty` on `PrototypeTemplate` for all class properties (`var()`,
+`property()`, and `fast_fn` properties).
+
+**References:**
+- Chromium bug: https://crbug.com/336325111
+- v8-dev discussion: https://www.mail-archive.com/v8-dev@googlegroups.com/msg162125.html
+- Node.js migration: https://github.com/nodejs/node/issues/52758
 
 When modifying V8 API calls, always check which version introduced/removed the API and add
 appropriate `#if` version guards. Test against the CI matrix (Ubuntu/macOS/Windows with

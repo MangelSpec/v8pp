@@ -658,18 +658,30 @@ public:
 		attribute_type attr = attribute;
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
-		v8::AccessorNameGetterCallback getter = &member_get<attribute_type>;
-		v8::AccessorNameSetterCallback setter = &member_set<attribute_type>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr));
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
-		// SetAccessor removed from ObjectTemplate in V8 12.9+
-		class_info_.js_function_template()
-			->InstanceTemplate()
-			->SetNativeDataProperty(v8_name, getter, setter, data,
-				v8::PropertyAttribute(v8::DontDelete),
-				v8::SideEffectType::kHasNoSideEffect,
-				v8::SideEffectType::kHasSideEffectToReceiver);
+		// V8 12.9+ removed ObjectTemplate::SetAccessor (crbug.com/336325111).
+		// Use SetAccessorProperty on PrototypeTemplate with FunctionTemplate-based
+		// getter/setter. This creates a proper JS accessor property on the prototype,
+		// preserving correct prototype chain semantics (properties can be overridden
+		// via Object.defineProperty on derived prototypes).
+		// See: https://www.mail-archive.com/v8-dev@googlegroups.com/msg162125.html
+		auto getter_template = v8::FunctionTemplate::New(isolate(),
+			&member_get_fn<attribute_type>, data,
+			v8::Local<v8::Signature>(), 0,
+			v8::ConstructorBehavior::kThrow,
+			v8::SideEffectType::kHasNoSideEffect);
+		auto setter_template = v8::FunctionTemplate::New(isolate(),
+			&member_set_fn<attribute_type>, data,
+			v8::Local<v8::Signature>(), 0,
+			v8::ConstructorBehavior::kThrow,
+			v8::SideEffectType::kHasSideEffectToReceiver);
+		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
+			v8_name, getter_template, setter_template,
+			v8::PropertyAttribute(v8::DontDelete));
 #else
+		v8::AccessorNameGetterCallback getter = &member_get<attribute_type>;
+		v8::AccessorNameSetterCallback setter = &member_set<attribute_type>;
 		class_info_.js_function_template()
 			->PrototypeTemplate()
 			->SetAccessor(v8_name, getter, setter, data,
@@ -703,18 +715,40 @@ public:
 
 		v8::HandleScope scope(isolate());
 
+		v8::Local<v8::String> v8_name = v8pp::to_v8_name(isolate(), name);
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+		// V8 12.9+ removed ObjectTemplate::SetAccessor (crbug.com/336325111).
+		// Use SetAccessorProperty on PrototypeTemplate with FunctionTemplate-based
+		// getter/setter — the same approach as fast_fn properties.
+		// See: https://www.mail-archive.com/v8-dev@googlegroups.com/msg162125.html
+		auto getter_template = v8::FunctionTemplate::New(isolate(),
+			&detail::forward_function<Traits, Getter>,
+			detail::external_data::set(isolate(), Getter(std::forward<GetFunction>(get))),
+			v8::Local<v8::Signature>(), 0,
+			v8::ConstructorBehavior::kThrow,
+			v8::SideEffectType::kHasNoSideEffect);
+
+		v8::Local<v8::FunctionTemplate> setter_template;
+		if constexpr (!property_type::is_readonly)
+		{
+			setter_template = v8::FunctionTemplate::New(isolate(),
+				&detail::forward_function<Traits, Setter>,
+				detail::external_data::set(isolate(), Setter(std::forward<SetFunction>(set))),
+				v8::Local<v8::Signature>(), 0,
+				v8::ConstructorBehavior::kThrow,
+				v8::SideEffectType::kHasSideEffectToReceiver);
+		}
+
+		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
+			v8_name, getter_template, setter_template,
+			property_type::is_readonly
+				? v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete)
+				: v8::PropertyAttribute(v8::DontDelete));
+#else
 		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
 		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
-		v8::Local<v8::String> v8_name = v8pp::to_v8_name(isolate(), name);
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
-
 		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
-		// SetAccessor removed from ObjectTemplate in V8 12.9+
-		class_info_.js_function_template()->InstanceTemplate()->SetNativeDataProperty(v8_name, getter, setter, data,
-			v8::PropertyAttribute(v8::DontDelete),
-			v8::SideEffectType::kHasNoSideEffect, setter_effect);
-#else
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data,
 			v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
@@ -1121,6 +1155,57 @@ private:
 			// TODO: info.GetReturnValue().Set(false);
 		}
 	}
+
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+	/// FunctionCallback-signature adapter for member variable getter.
+	/// Used with SetAccessorProperty (V8 12.9+) which requires FunctionTemplate.
+	template<typename Attribute>
+	static void member_get_fn(v8::FunctionCallbackInfo<v8::Value> const& args)
+	{
+		v8::Isolate* isolate = args.GetIsolate();
+
+		try
+		{
+			auto self = unwrap_object(isolate, args.This());
+			if (!self)
+			{
+				args.GetReturnValue().Set(throw_ex(isolate, "accessing member on non-existent C++ object"));
+				return;
+			}
+			Attribute attr = detail::external_data::get<Attribute>(args.Data());
+			args.GetReturnValue().Set(to_v8(isolate, (*self).*attr));
+		}
+		catch (std::exception const& ex)
+		{
+			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+		}
+	}
+
+	/// FunctionCallback-signature adapter for member variable setter.
+	/// Used with SetAccessorProperty (V8 12.9+) which requires FunctionTemplate.
+	template<typename Attribute>
+	static void member_set_fn(v8::FunctionCallbackInfo<v8::Value> const& args)
+	{
+		v8::Isolate* isolate = args.GetIsolate();
+
+		try
+		{
+			auto self = unwrap_object(isolate, args.This());
+			if (!self)
+			{
+				isolate->ThrowException(throw_ex(isolate, "setting member on non-existent C++ object"));
+				return;
+			}
+			Attribute ptr = detail::external_data::get<Attribute>(args.Data());
+			using attr_type = typename detail::function_traits<Attribute>::return_type;
+			(*self).*ptr = v8pp::from_v8<attr_type>(isolate, args[0]);
+		}
+		catch (std::exception const& ex)
+		{
+			isolate->ThrowException(throw_ex(isolate, ex.what()));
+		}
+	}
+#endif
 };
 
 /// Interface to access C++ classes bound to V8
