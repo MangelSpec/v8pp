@@ -327,9 +327,13 @@ void test_class_()
 			(function() {
 				var s = JSON.stringify({'obj': new Y(10), 'arr': [new Y(11), new Y(12)]});
 				var r = JSON.parse(s);
-				var props = ['rprop','wprop','wprop2','prop','prop2','rprop_direct',
-					'rprop_external1','rprop_external2','rprop_external3',
-					'wprop_external1','wprop_external2','wprop_external3'];
+				var props = ['rprop','wprop','wprop2','prop','prop2',
+					'rprop_external1','rprop_external2',
+					'wprop_external1','wprop_external2')"
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 9)
+								  R"(,'rprop_direct','rprop_external3','wprop_external3')"
+#endif
+								  R"(];
 				var fns = ['fun1','fun2','fun3','fun4','static_fun','static_lambda',
 					'extern_fun','useX','useX_ptr','toJSON'];
 				function check(o, v) {
