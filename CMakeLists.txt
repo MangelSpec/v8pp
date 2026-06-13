@@ -12,14 +12,14 @@ project(v8pp
 	LANGUAGES CXX
 )
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# The C++ standard and /Zc:__cplusplus are requirements of the v8pp target
+# itself (target_compile_features / target_compile_options in v8pp/CMakeLists.txt),
+# not global state. Consuming v8pp via add_subdirectory therefore leaves the
+# parent project's own standard and flags untouched.
 
 if (MSVC)
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zc:__cplusplus") # enable correct __cplusplus macro
 	# static CRT when using a custom V8 monolith built with /MT
-	if(DEFINED CUSTOM_V8_LIB_PATH)
+	if(DEFINED CUSTOM_V8_LIB_PATH OR DEFINED CUSTOM_V8_LIB_PATH_ABS)
 		set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 	endif()
 endif()
