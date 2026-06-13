@@ -67,6 +67,11 @@ Tested on:
 - Concepts replace SFINAE for type dispatch (`mapping`, `sequence`, `set_like`, `callable`, etc.)
 - Dead V8 < 9.0 code paths removed
 
+**Build system**
+- Uses no `typeid`/`dynamic_cast`; the compiled library is built RTTI-free (`-fno-rtti` / `/GR-`) to match V8's default ABI
+- Build flags (RTTI, warning level, exception model) are scoped `PRIVATE`; only the C++20 requirement and V8 ABI defines are public, so consumers are never forced to adopt v8pp's build choices
+- No global CMake state is set, so embedding via `add_subdirectory` leaves the parent project's standard and flags untouched
+
 ## Building and testing
 
 The library has a set of tests that can be configured, built, and run with CMake:
