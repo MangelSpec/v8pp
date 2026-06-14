@@ -49,6 +49,12 @@ add_subdirectory(v8pp)
 
 if(BUILD_TESTING)
 	enable_testing()
+	# v8pp's public headers pull in V8 headers that check __cplusplus, which MSVC only
+	# reports correctly with /Zc:__cplusplus. That flag is PRIVATE on the v8pp target, so
+	# apply it to the test/plugin consumers here (does not affect v8pp's public interface).
+	if(MSVC)
+		add_compile_options(/Zc:__cplusplus)
+	endif()
 	add_subdirectory(plugins)
 	add_subdirectory(test)
 endif()

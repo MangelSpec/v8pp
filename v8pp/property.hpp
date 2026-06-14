@@ -96,10 +96,6 @@ void property_set(Set& setter, v8::Local<v8::Name> name, v8::Local<v8::Value> va
 	}
 }
 
-// PropertyCallbackInfo-based accessors are only used on V8 < 12.9 (the removed
-// ObjectTemplate::SetAccessor path). On newer V8 they are unused, and
-// PropertyCallbackInfo::This() was removed in V8 14.6, so guard them out.
-#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 9)
 template<typename Property, typename Traits, typename GetClass>
 void property_get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> const& info)
 try
@@ -112,7 +108,7 @@ try
 	}
 	else
 	{
-		auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(info.GetIsolate(), info.This());
+		auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(info.GetIsolate(), property_callback_this(info));
 		if (!obj)
 		{
 			info.GetReturnValue().Set(throw_ex(info.GetIsolate(), "accessing property on non-existent C++ object"));
@@ -141,7 +137,7 @@ try
 	}
 	else
 	{
-		auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(info.GetIsolate(), info.This());
+		auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(info.GetIsolate(), property_callback_this(info));
 		if (!obj)
 		{
 			throw_ex(info.GetIsolate(), "setting property on non-existent C++ object");
@@ -158,7 +154,6 @@ catch (std::exception const& ex)
 	}
 	// TODO: info.GetReturnValue().Set(false);
 }
-#endif
 
 } // namespace v8pp::detail
 

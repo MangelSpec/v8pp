@@ -58,6 +58,20 @@ inline void* get_internal_pointer(v8::Local<v8::Object> obj, int index)
 #endif
 }
 
+// PropertyCallbackInfo::This() was removed in V8 14.6. v8pp needs the receiver in
+// PropertyCallbackInfo accessors only on the V8 < 12.9 SetAccessor path (class properties
+// bound with an object); on newer V8 those branches are discarded, but the call must still
+// parse, so route it through this helper and fall back to Holder() once This() is gone.
+template<typename T>
+inline v8::Local<v8::Object> property_callback_this(v8::PropertyCallbackInfo<T> const& info)
+{
+#if V8_MAJOR_VERSION > 14 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 6)
+	return info.Holder();
+#else
+	return info.This();
+#endif
+}
+
 /// Check if T is a supported Fast API return type
 /// V8 10.x supports: void, bool, int32_t, uint32_t, float, double
 template<typename T>
