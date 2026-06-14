@@ -1,5 +1,6 @@
 #include <iostream>
 #include <algorithm>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 #include <exception>
@@ -80,6 +81,19 @@ void run_tests()
 
 int main(int argc, char const* argv[])
 {
+	// Diagnostic: print the message of any exception that escapes a V8 callback. V8 frames
+	// are built without exception support, so such throws hit std::terminate instead of
+	// unwinding to run_tests(), and libc++abi otherwise drops the what() text.
+	std::set_terminate([]()
+		{
+			if (std::exception_ptr e = std::current_exception())
+			{
+				try { std::rethrow_exception(e); }
+				catch (std::exception const& ex) { std::cerr << "\nterminate: uncaught " << ex.what() << std::endl; }
+				catch (...) { std::cerr << "\nterminate: uncaught non-std exception" << std::endl; }
+			}
+			std::abort(); });
+
 	std::vector<std::string> scripts;
 	std::string lib_path;
 	bool do_tests = false;
