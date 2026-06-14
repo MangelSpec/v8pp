@@ -61,9 +61,13 @@ jobs:
           - os: ubuntu-latest
             v8_compress_pointers: false
             v8_enable_sandbox: false
+          # Homebrew's V8 bottle is built with v8_enable_sandbox=false (it is incompatible
+          # with the formula's use_custom_libcxx=false), so the embedder must match or V8
+          # aborts at startup with a build-configuration-mismatch fatal error. Pointer
+          # compression is left at V8's 64-bit default (on).
           - os: macos-latest
             v8_compress_pointers: true
-            v8_enable_sandbox: true
+            v8_enable_sandbox: false
           - os: windows-2022
             v8_compress_pointers: true
             v8_enable_sandbox: true
