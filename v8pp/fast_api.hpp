@@ -15,6 +15,49 @@ namespace v8pp {
 
 namespace detail {
 
+// V8 sandbox API compatibility: newer V8 requires a type tag on v8::External and on
+// aligned-pointer internal fields, and the tag must match between store and load. v8pp
+// uses a single default-tagged space, so these helpers pass the default tag (value 0)
+// where V8 requires it and keep older V8 (apt/nuget) compiling with the untagged API.
+// - EmbedderDataTypeTag on aligned-pointer internal fields: V8 14.1+
+// - ExternalPointerTypeTag on v8::External::New/Value: V8 14.3+
+
+inline v8::Local<v8::External> make_external(v8::Isolate* isolate, void* value)
+{
+#if V8_MAJOR_VERSION > 14 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 3)
+	return v8::External::New(isolate, value, v8::ExternalPointerTypeTag{});
+#else
+	return v8::External::New(isolate, value);
+#endif
+}
+
+inline void* external_value(v8::Local<v8::External> external)
+{
+#if V8_MAJOR_VERSION > 14 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 3)
+	return external->Value(v8::ExternalPointerTypeTag{});
+#else
+	return external->Value();
+#endif
+}
+
+inline void set_internal_pointer(v8::Local<v8::Object> obj, int index, void* value)
+{
+#if V8_MAJOR_VERSION > 14 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 1)
+	obj->SetAlignedPointerInInternalField(index, value, v8::EmbedderDataTypeTag{});
+#else
+	obj->SetAlignedPointerInInternalField(index, value);
+#endif
+}
+
+inline void* get_internal_pointer(v8::Local<v8::Object> obj, int index)
+{
+#if V8_MAJOR_VERSION > 14 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 1)
+	return obj->GetAlignedPointerFromInternalField(index, v8::EmbedderDataTypeTag{});
+#else
+	return obj->GetAlignedPointerFromInternalField(index);
+#endif
+}
+
 /// Check if T is a supported Fast API return type
 /// V8 10.x supports: void, bool, int32_t, uint32_t, float, double
 template<typename T>
@@ -87,7 +130,7 @@ struct fast_callback<MemPtr>
 	static R call(v8::Local<v8::Object> receiver, Args... args,
 		v8::FastApiCallbackOptions& options)
 	{
-		void* ptr = receiver->GetAlignedPointerFromInternalField(0);
+		void* ptr = get_internal_pointer(receiver, 0);
 		if (!ptr)
 		{
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
@@ -111,7 +154,7 @@ struct fast_callback<MemPtr>
 	static R call(v8::Local<v8::Object> receiver, Args... args,
 		v8::FastApiCallbackOptions& options)
 	{
-		void* ptr = receiver->GetAlignedPointerFromInternalField(0);
+		void* ptr = get_internal_pointer(receiver, 0);
 		if (!ptr)
 		{
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)

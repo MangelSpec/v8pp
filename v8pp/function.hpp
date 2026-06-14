@@ -29,7 +29,7 @@ public:
 		{
 			void* ptr = nullptr;
 			memcpy(&ptr, &value, sizeof value);
-			return v8::External::New(isolate, ptr);
+			return make_external(isolate, ptr);
 		}
 		else
 		{
@@ -44,7 +44,7 @@ public:
 	{
 		if constexpr (is_bitcast_allowed<T>)
 		{
-			void* ptr = value.As<v8::External>()->Value();
+			void* ptr = external_value(value.As<v8::External>());
 			T data;
 			memcpy(&data, &ptr, sizeof data);
 			return data;
@@ -52,7 +52,7 @@ public:
 		else
 		{
 			using ExtValue = value_holder<T>;
-			ExtValue* ext_value = static_cast<ExtValue*>(value.As<v8::External>()->Value());
+			ExtValue* ext_value = static_cast<ExtValue*>(external_value(value.As<v8::External>()));
 			return (ext_value->data()); // as reference
 		}
 	}
@@ -112,7 +112,7 @@ private:
 		value_holder(v8::Isolate* isolate, T&& data)
 		{
 			new (&storage) T(std::forward<T>(data));
-			pext.Reset(isolate, v8::External::New(isolate, this));
+			pext.Reset(isolate, make_external(isolate, this));
 			pext.SetWrapperClassId(external_data::class_id);
 			pext.SetWeak(this, [](v8::WeakCallbackInfo<value_holder> const& info)
 				{ delete info.GetParameter(); }, v8::WeakCallbackType::kParameter);

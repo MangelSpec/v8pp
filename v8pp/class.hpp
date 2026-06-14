@@ -247,7 +247,7 @@ struct iterator_factory
 			v8::Local<v8::Context> context = isolate->GetCurrentContext();
 			v8::Local<v8::Object> iter_obj = v8::Object::New(isolate);
 
-			v8::Local<v8::External> state_ext = v8::External::New(isolate, iter_state);
+			v8::Local<v8::External> state_ext = make_external(isolate, iter_state);
 			v8::Local<v8::Function> next_fn;
 			if (!v8::Function::New(context, &next_callback, state_ext).ToLocal(&next_fn))
 			{
@@ -278,7 +278,7 @@ struct iterator_factory
 		try
 		{
 			auto* iter_state = static_cast<state*>(
-				args.Data().As<v8::External>()->Value());
+				external_value(args.Data().As<v8::External>()));
 
 			v8::Local<v8::Context> context = isolate->GetCurrentContext();
 			v8::Local<v8::Object> result = v8::Object::New(isolate);
@@ -1118,6 +1118,10 @@ private:
 		return *this;
 	}
 
+	// PropertyCallbackInfo-based accessors are only used on V8 < 12.9 (the removed
+	// ObjectTemplate::SetAccessor path). On newer V8 they are unused, and
+	// PropertyCallbackInfo::This() was removed in V8 14.6, so guard them out.
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 9)
 	template<typename Attribute>
 	static void member_get(v8::Local<v8::Name>,
 		v8::PropertyCallbackInfo<v8::Value> const& info)
@@ -1168,6 +1172,7 @@ private:
 			// TODO: info.GetReturnValue().Set(false);
 		}
 	}
+#endif
 
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 	/// FunctionCallback-signature adapter for member variable getter.
