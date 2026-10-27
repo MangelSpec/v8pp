@@ -265,6 +265,18 @@ void test_type_traits()
 
 void test_utility()
 {
+	bool missing_exception_rejected = false;
+	try
+	{
+		check_ex<std::runtime_error>("missing exception", [] {});
+	}
+	catch (std::runtime_error const&)
+	{
+		missing_exception_rejected = true;
+	}
+	check("exception assertions reject non-throwing functions", missing_exception_rejected);
+	check_ex<std::runtime_error>("actual exception", []
+		{ throw std::runtime_error("expected"); });
 	test_type_traits();
 	test_function_traits();
 	test_tuple_tail();

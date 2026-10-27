@@ -377,8 +377,7 @@ void test_class_()
 	check("unref y1", !v8pp::from_v8<decltype(y1)>(isolate, y1_obj));
 	check("unref y1_obj", v8pp::to_v8(isolate, y1).IsEmpty());
 	y1_obj.Clear();
-	check_ex<std::runtime_error>("y1 unreferenced", [isolate, &y1]()
-		{ v8pp::to_v8(isolate, y1); });
+	check("y1 remains unreferenced", v8pp::to_v8(isolate, y1).IsEmpty());
 
 	v8pp::class_<Y, Traits>::destroy_object(isolate, y2);
 	check("unref y2", !v8pp::from_v8<decltype(y2)>(isolate, y2_obj));

@@ -218,13 +218,14 @@ void check_ex(std::string_view msg, F&& f)
 	try
 	{
 		f();
-		std::stringstream ss;
-		ss << msg << " expected " << v8pp::detail::type_id<Ex>().name() << " exception";
-		check(ss.str(), false);
 	}
 	catch (Ex const&)
 	{
+		return;
 	}
+	std::stringstream ss;
+	ss << msg << " expected " << v8pp::detail::type_id<Ex>().name() << " exception";
+	check(ss.str(), false);
 }
 
 template<typename T>

@@ -11,7 +11,7 @@
 #include "v8pp/context.hpp"
 #include "v8pp/version.hpp"
 
-void run_tests()
+void run_tests(std::vector<std::string> const& selected)
 {
 	void test_type_info();
 	void test_utility();
@@ -61,8 +61,18 @@ void run_tests()
 		{ "test_thread_safety", test_thread_safety },
 	};
 
+	for (auto const& name : selected)
+	{
+		if (std::none_of(std::begin(tests), std::end(tests), [&name](auto const& test)
+				{ return name == test.first; }))
+		{
+			std::cerr << "Unknown test group: " << name << '\n';
+			exit(EXIT_FAILURE);
+		}
+	}
 	for (auto const& test : tests)
 	{
+		if (!selected.empty() && std::find(selected.begin(), selected.end(), test.first) == selected.end()) continue;
 		std::cout << test.first;
 		try
 		{
@@ -81,6 +91,7 @@ void run_tests()
 int main(int argc, char const* argv[])
 {
 	std::vector<std::string> scripts;
+	std::vector<std::string> selected_tests;
 	std::string lib_path;
 	bool do_tests = false;
 
@@ -94,7 +105,8 @@ int main(int argc, char const* argv[])
 					  << "  --help,-h           Print this message and exit\n"
 					  << "  --version,-v        Print V8 version\n"
 					  << "  --lib-path <dir>    Set <dir> for plugins library path\n"
-					  << "  --run-tests         Run library tests\n";
+					  << "  --run-tests         Run library tests\n"
+					  << "  --test <name>       Run one named test group (repeatable)\n";
 			return EXIT_SUCCESS;
 		}
 		else if (arg == "-v" || arg == "--version")
@@ -114,6 +126,16 @@ int main(int argc, char const* argv[])
 		}
 		else if (arg == "--run-tests")
 		{
+			do_tests = true;
+		}
+		else if (arg == "--test")
+		{
+			if (++i == argc)
+			{
+				std::cerr << "--test requires a test group name\n";
+				return EXIT_FAILURE;
+			}
+			selected_tests.emplace_back(argv[i]);
 			do_tests = true;
 		}
 		else
@@ -138,7 +160,7 @@ int main(int argc, char const* argv[])
 
 	if (do_tests || scripts.empty())
 	{
-		run_tests();
+		run_tests(selected_tests);
 	}
 
 	int result = EXIT_SUCCESS;
