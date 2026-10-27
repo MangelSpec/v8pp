@@ -61,6 +61,7 @@ jobs:
           - os: ubuntu-latest
             v8_compress_pointers: false
             v8_enable_sandbox: false
+          # Match Homebrew's V8 build, which disables the sandbox with custom libc++ off.
           - os: macos-latest
             v8_compress_pointers: true
             v8_enable_sandbox: false

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <algorithm>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 #include <exception>
@@ -90,6 +91,17 @@ void run_tests(std::vector<std::string> const& selected)
 
 int main(int argc, char const* argv[])
 {
+	// V8 frames may terminate instead of unwinding callback exceptions to the test runner.
+	std::set_terminate([]()
+		{
+			if (std::exception_ptr e = std::current_exception())
+			{
+				try { std::rethrow_exception(e); }
+				catch (std::exception const& ex) { std::cerr << "\nterminate: uncaught " << ex.what() << std::endl; }
+				catch (...) { std::cerr << "\nterminate: uncaught non-std exception" << std::endl; }
+			}
+			std::abort(); });
+
 	std::vector<std::string> scripts;
 	std::vector<std::string> selected_tests;
 	std::string lib_path;

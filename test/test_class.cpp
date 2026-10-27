@@ -131,12 +131,15 @@ static int extern_fun(v8::FunctionCallbackInfo<v8::Value> const& args)
 	return x;
 }
 
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 9)
+// Direct PropertyCallbackInfo getters require the legacy SetAccessor path.
 template<typename Traits>
 void get_rprop_direct(v8::Local<v8::Name>, v8::PropertyCallbackInfo<v8::Value> const& info)
 {
 	auto self = v8pp::class_<X, Traits>::unwrap_object(info.GetIsolate(), v8pp::detail::property_receiver(info));
 	info.GetReturnValue().Set(v8pp::to_v8(info.GetIsolate(), self->var));
 }
+#endif
 
 template<typename Traits>
 void test_class_()
