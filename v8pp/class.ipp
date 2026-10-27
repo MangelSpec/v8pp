@@ -67,7 +67,7 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 				}
 				else if (wrapped.IsEmpty())
 				{
-					args.GetReturnValue().Set(throw_ex(isolate, "wrapped nullptr"));
+					throw std::runtime_error("wrapped nullptr");
 				}
 				else
 				{
@@ -203,6 +203,11 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::find_v8_object(pointer_
 template<typename Traits>
 V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, size_t size)
 {
+	if (!object)
+	{
+		return {};
+	}
+
 	auto it = objects_.find(object);
 	if (it != objects_.end())
 	{

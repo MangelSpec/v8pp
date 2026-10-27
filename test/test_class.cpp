@@ -726,6 +726,62 @@ void test_ctor_multi_dispatch_with_defaults()
 		run_script<std::string>(context, "c = new Config(99, 'custom'); c.name"), "custom");
 }
 
+template<typename Traits>
+void test_failed_ctor_factory()
+{
+	struct Item
+	{
+		int value;
+		explicit Item(int value) : value(value) {}
+	};
+
+	v8pp::context context;
+	v8::Isolate* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	using item_class = v8pp::class_<Item, Traits>;
+
+	auto factory = [](v8::FunctionCallbackInfo<v8::Value> const& args) -> typename item_class::object_pointer_type
+	{
+		if (!args.Length()) return {};
+		if (args[0]->IsObject())
+		{
+			args.GetIsolate()->ThrowException(args[0]);
+			return {};
+		}
+		return Traits::template create<Item>(v8pp::from_v8<int>(args.GetIsolate(), args[0]));
+	};
+
+	item_class binding(isolate);
+	binding.ctor(factory).var("value", &Item::value);
+	context.class_("Item", binding);
+
+	check("null constructor fails consistently", run_script<bool>(context, R"(
+		(() => {
+			for (let i = 0; i < 3; ++i) {
+				try { new Item(); return false; }
+				catch (error) { if (error.message !== 'wrapped nullptr') return false; }
+			}
+			return true;
+		})()
+	)"));
+	check("failed constructor does not register nullptr",
+		item_class::find_object(isolate, typename item_class::object_const_pointer_type{}).IsEmpty());
+	check("repeated constructor failure preserves exception identity", run_script<bool>(context, R"(
+		(() => {
+			const original = { message: 'original constructor failure' };
+			for (let i = 0; i < 3; ++i) {
+				try { new Item(original); return false; }
+				catch (error) { if (error !== original) return false; }
+			}
+			return true;
+		})()
+	)"));
+	check("throwing constructor does not register nullptr",
+		item_class::find_object(isolate, typename item_class::object_const_pointer_type{}).IsEmpty());
+	check_eq("valid construction after failed factories",
+		run_script<int>(context, "new Item(42).value"), 42);
+}
+
 void test_class()
 {
 	test_class_<v8pp::raw_ptr_traits>();
@@ -748,4 +804,7 @@ void test_class()
 
 	test_ctor_multi_dispatch_with_defaults<v8pp::raw_ptr_traits>();
 	test_ctor_multi_dispatch_with_defaults<v8pp::shared_ptr_traits>();
+
+	test_failed_ctor_factory<v8pp::raw_ptr_traits>();
+	test_failed_ctor_factory<v8pp::shared_ptr_traits>();
 }
