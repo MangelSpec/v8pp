@@ -165,6 +165,7 @@ void forward_function(v8::FunctionCallbackInfo<v8::Value> const& args)
 
 	v8::Isolate* isolate = args.GetIsolate();
 	v8::HandleScope scope(isolate);
+	v8::TryCatch try_catch(isolate);
 	try
 	{
 		if constexpr (std::same_as<typename FTraits::return_type, void>)
@@ -175,13 +176,15 @@ void forward_function(v8::FunctionCallbackInfo<v8::Value> const& args)
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
-			args.GetReturnValue().Set(converter::to_v8(isolate, invoke<Traits, F, FTraits>(args)));
+			decltype(auto) result = invoke<Traits, F, FTraits>(args);
+			if (!try_catch.HasCaught()) args.GetReturnValue().Set(converter::to_v8(isolate, std::forward<decltype(result)>(result)));
 		}
 	}
 	catch (std::exception const& ex)
 	{
-		args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+		if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 	}
+	if (try_catch.HasCaught()) try_catch.ReThrow();
 }
 
 /// V8 callback adapter for functions with default parameter values
@@ -195,6 +198,7 @@ void forward_function_with_defaults(v8::FunctionCallbackInfo<v8::Value> const& a
 
 	v8::Isolate* isolate = args.GetIsolate();
 	v8::HandleScope scope(isolate);
+	v8::TryCatch try_catch(isolate);
 	try
 	{
 		auto& bundle = external_data::get<Bundle>(args.Data());
@@ -215,8 +219,8 @@ void forward_function_with_defaults(v8::FunctionCallbackInfo<v8::Value> const& a
 			{
 				using return_type = typename FTraits::return_type;
 				using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
-				args.GetReturnValue().Set(converter::to_v8(isolate,
-					call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs, *obj)));
+				decltype(auto) result = call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs, *obj);
+				if (!try_catch.HasCaught()) args.GetReturnValue().Set(converter::to_v8(isolate, std::forward<decltype(result)>(result)));
 			}
 		}
 		else
@@ -229,15 +233,16 @@ void forward_function_with_defaults(v8::FunctionCallbackInfo<v8::Value> const& a
 			{
 				using return_type = typename FTraits::return_type;
 				using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
-				args.GetReturnValue().Set(converter::to_v8(isolate,
-					call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs)));
+				decltype(auto) result = call_from_v8<Traits>(std::forward<F>(bundle.func), args, bundle.defs);
+				if (!try_catch.HasCaught()) args.GetReturnValue().Set(converter::to_v8(isolate, std::forward<decltype(result)>(result)));
 			}
 		}
 	}
 	catch (std::exception const& ex)
 	{
-		args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+		if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 	}
+	if (try_catch.HasCaught()) try_catch.ReThrow();
 }
 
 } // namespace v8pp::detail

@@ -946,6 +946,85 @@ void test_convert_span(v8::Isolate* isolate)
 	}
 }
 
+void test_conversion_failures(v8pp::context& context)
+{
+	context.function("review_vector", [](std::vector<int>)
+		{ return 1; });
+	context.function("review_tuple", [](std::tuple<int, int>)
+		{ return 1; });
+	context.function("review_pair", [](std::pair<int, int>)
+		{ return 1; });
+	context.function("review_set", [](std::set<int>)
+		{ return 1; });
+	context.function("review_map", [](std::map<std::string, int>)
+		{ return 1; });
+	check("container getters preserve original exceptions", run_script<bool>(context, R"(
+		(() => {
+			const original = {reason: 'getter failure'};
+			for (const fn of [review_vector, review_tuple, review_pair, review_set]) {
+				const input = Object.defineProperty([1, 2], '0', {get() {throw original;}});
+				try {fn(input); return false;} catch (error) {if (error !== original) return false;}
+			}
+			for (const input of [
+				{get value() {throw original;}},
+				new Proxy({value: 1}, {get() {throw original;}}),
+				new Proxy({}, {ownKeys() {throw original;}})
+			]) {
+				try {review_map(input); return false;} catch (error) {if (error !== original) return false;}
+			}
+			return true;
+		})()
+	)"));
+	context.function("review_vector_out", []
+		{ return std::vector<int>{ 42 }; });
+	context.function("review_tuple_out", []
+		{ return std::tuple<int, int>{ 42, 7 }; });
+	context.function("review_pair_out", []
+		{ return std::pair<int, int>{ 42, 7 }; });
+	context.function("review_set_out", []
+		{ return std::set<int>{ 42 }; });
+	context.function("review_map_out", []
+		{ return std::map<std::string, int>{ { "value", 42 } }; });
+	context.function("review_proto_out", []
+		{ return std::map<std::string, std::string>{ { "__proto__", "data" } }; });
+	check("container output defines own data properties", run_script<bool>(context, R"(
+		(() => {
+			Object.defineProperty(Array.prototype, '0', {configurable: true, set() {throw 'array setter';}});
+			Object.defineProperty(Object.prototype, 'value', {configurable: true, set() {throw 'object setter';}});
+			try {
+				return review_vector_out()[0] === 42 && review_tuple_out()[0] === 42 &&
+					review_pair_out()[0] === 42 && review_set_out()[0] === 42 && review_map_out().value === 42;
+			} finally {
+				delete Array.prototype[0]; delete Object.prototype.value;
+			}
+		})()
+	)"));
+	check("map output preserves __proto__ as an own key", run_script<bool>(context, R"(
+		(() => {const result = review_proto_out();
+			return Object.prototype.hasOwnProperty.call(result, '__proto__') && result.__proto__ === 'data' &&
+				Object.getPrototypeOf(result) === Object.prototype;})()
+	)"));
+	context.function("review_i64", [](int64_t value)
+		{ return std::to_string(value); });
+	context.function("review_u64", [](uint64_t value)
+		{ return std::to_string(value); });
+	check("64-bit conversions check bounds", run_script<bool>(context, R"(
+		(() => {
+			if (review_i64(9223372036854775807n) !== '9223372036854775807' ||
+				review_u64(18446744073709551615n) !== '18446744073709551615' ||
+				review_u64(2 ** 63) !== '9223372036854775808') return false;
+			for (const fn of [review_i64, review_u64]) {
+				for (const value of [1n << 64n, Infinity, NaN, 2 ** 64]) {
+					try {fn(value); return false;} catch (error) {}
+				}
+			}
+			try {review_u64(-1n); return false;} catch (error) {}
+			try {review_u64(-1); return false;} catch (error) {}
+			return true;
+		})()
+	)"));
+}
+
 void test_convert()
 {
 	v8pp::context context;
@@ -1017,4 +1096,5 @@ void test_convert()
 	test_convert_chrono(isolate);
 	test_convert_arraybuffer(isolate);
 	test_convert_span(isolate);
+	test_conversion_failures(context);
 }

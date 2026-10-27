@@ -115,6 +115,24 @@ struct runtime_error : std::runtime_error
 	runtime_error(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* message);
 };
 
+namespace detail {
+
+template<typename T>
+v8::Local<T> checked_local(v8::MaybeLocal<T> value)
+{
+	v8::Local<T> result;
+	if (!value.ToLocal(&result)) throw std::runtime_error("JavaScript conversion failed");
+	return result;
+}
+
+inline bool checked_property(v8::Maybe<bool> result)
+{
+	if (!result.FromMaybe(false)) throw std::runtime_error("JavaScript property creation failed");
+	return true;
+}
+
+} // namespace detail
+
 // converter specializations for string types
 template<typename String>
 requires detail::is_string<String>::value
@@ -398,18 +416,25 @@ struct convert<T, void>
 		{
 			// Accept BigInt from JS side for interop
 			auto bigint = value.As<v8::BigInt>();
+			bool lossless = false;
 			if constexpr (std::is_signed_v<T>)
 			{
-				return static_cast<T>(bigint->Int64Value());
+				auto result = bigint->Int64Value(&lossless);
+				return lossless ? std::optional<from_type>{ static_cast<T>(result) } : std::nullopt;
 			}
 			else
 			{
-				return static_cast<T>(bigint->Uint64Value());
+				auto result = bigint->Uint64Value(&lossless);
+				return lossless ? std::optional<from_type>{ static_cast<T>(result) } : std::nullopt;
 			}
 		}
 		else
 		{
-			return static_cast<T>(value->IntegerValue(isolate->GetCurrentContext()).FromJust());
+			double number = value->NumberValue(isolate->GetCurrentContext()).FromJust();
+			double const upper = std::ldexp(1.0, std::numeric_limits<T>::digits);
+			double const lower = std::is_signed_v<T> ? -upper : 0.0;
+			if (!std::isfinite(number) || number < lower || number >= upper) return std::nullopt;
+			return static_cast<T>(number);
 		}
 	}
 
@@ -577,7 +602,7 @@ private:
 		v8::Local<v8::Context> context = isolate->GetCurrentContext();
 		v8::Local<v8::Array> array = value.As<v8::Array>();
 
-		return std::tuple<Ts...>{ v8pp::convert<Ts>::from_v8(isolate, array->Get(context, Is).ToLocalChecked())... };
+		return std::tuple<Ts...>{ v8pp::convert<Ts>::from_v8(isolate, detail::checked_local(array->Get(context, Is)))... };
 	}
 
 	template<size_t... Is>
@@ -587,7 +612,7 @@ private:
 		v8::Local<v8::Context> context = isolate->GetCurrentContext();
 		v8::Local<v8::Array> result = v8::Array::New(isolate, N);
 
-		(void)std::initializer_list<bool>{ result->Set(context, Is, convert<Ts>::to_v8(isolate, std::get<Is>(value))).FromJust()... };
+		(void)std::initializer_list<bool>{ detail::checked_property(result->CreateDataProperty(context, Is, convert<Ts>::to_v8(isolate, std::get<Is>(value))))... };
 
 		return scope.Escape(result);
 	}
@@ -700,8 +725,8 @@ private:
 
 	static bool is_map_object(v8::Isolate* isolate, v8::Local<v8::Object> obj)
 	{
-		v8::Local<v8::Array> prop_names;
-		return obj->GetPropertyNames(isolate->GetCurrentContext()).ToLocal(&prop_names) && prop_names->Length() > 0;
+		auto prop_names = detail::checked_local(obj->GetPropertyNames(isolate->GetCurrentContext()));
+		return prop_names->Length() > 0;
 	}
 
 	template<typename T, typename Number>
@@ -806,7 +831,12 @@ private:
 			}
 			else
 			{
-				get_number<T, int64_t>(isolate, value, result);
+				double number = value->NumberValue(isolate->GetCurrentContext()).FromJust();
+				if (std::isfinite(number) && number == std::trunc(number) &&
+					number >= std::numeric_limits<T>::lowest() && number <= std::numeric_limits<T>::max())
+				{
+					result = static_cast<T>(number);
+				}
 			}
 		}
 		else if constexpr (std::is_floating_point_v<T>)
@@ -881,7 +911,7 @@ struct convert<Sequence, void>
 
 		for (uint32_t i = 0, count = array->Length(); i < count; ++i)
 		{
-			v8::Local<v8::Value> item = array->Get(context, i).ToLocalChecked();
+			v8::Local<v8::Value> item = detail::checked_local(array->Get(context, i));
 			if constexpr (is_array)
 			{
 				result[i] = convert<item_type>::from_v8(isolate, item);
@@ -908,7 +938,7 @@ struct convert<Sequence, void>
 		uint32_t i = 0;
 		for (item_type const& item : value)
 		{
-			result->Set(context, i++, convert<item_type>::to_v8(isolate, item)).FromJust();
+			detail::checked_property(result->CreateDataProperty(context, i++, convert<item_type>::to_v8(isolate, item)));
 		}
 		return scope.Escape(result);
 	}
@@ -951,8 +981,8 @@ struct convert<Mapping, void>
 		from_type result{};
 		for (uint32_t i = 0, count = prop_names->Length(); i < count; ++i)
 		{
-			v8::Local<v8::Value> key = prop_names->Get(context, i).ToLocalChecked();
-			v8::Local<v8::Value> val = object->Get(context, key).ToLocalChecked();
+			v8::Local<v8::Value> key = detail::checked_local(prop_names->Get(context, i));
+			v8::Local<v8::Value> val = detail::checked_local(object->Get(context, key));
 			const auto k = convert<Key>::from_v8(isolate, key);
 			const auto v = convert<Value>::from_v8(isolate, val);
 			result.emplace(k, v);
@@ -969,7 +999,9 @@ struct convert<Mapping, void>
 		{
 			const auto k = convert<Key>::to_v8(isolate, item.first);
 			const auto v = convert<Value>::to_v8(isolate, item.second);
-			result->Set(context, k, v).FromJust();
+			v8::Local<v8::Value> key = k;
+			v8::Local<v8::Name> name = key->IsName() ? key.As<v8::Name>() : detail::checked_local(key->ToString(context)).As<v8::Name>();
+			detail::checked_property(result->CreateDataProperty(context, name, v));
 		}
 		return scope.Escape(result);
 	}
@@ -1010,7 +1042,7 @@ struct convert<Set, void>
 
 		for (uint32_t i = 0, count = array->Length(); i < count; ++i)
 		{
-			v8::Local<v8::Value> item = array->Get(context, i).ToLocalChecked();
+			v8::Local<v8::Value> item = detail::checked_local(array->Get(context, i));
 			result.insert(convert<item_type>::from_v8(isolate, item));
 		}
 		return result;
@@ -1030,7 +1062,7 @@ struct convert<Set, void>
 		uint32_t i = 0;
 		for (item_type const& item : value)
 		{
-			result->Set(context, i++, convert<item_type>::to_v8(isolate, item)).FromJust();
+			detail::checked_property(result->CreateDataProperty(context, i++, convert<item_type>::to_v8(isolate, item)));
 		}
 		return scope.Escape(result);
 	}
@@ -1062,8 +1094,8 @@ struct convert<std::pair<K, V>, void>
 		v8::Local<v8::Context> context = isolate->GetCurrentContext();
 		v8::Local<v8::Array> array = value.As<v8::Array>();
 
-		v8::Local<v8::Value> first = array->Get(context, 0).ToLocalChecked();
-		v8::Local<v8::Value> second = array->Get(context, 1).ToLocalChecked();
+		v8::Local<v8::Value> first = detail::checked_local(array->Get(context, 0));
+		v8::Local<v8::Value> second = detail::checked_local(array->Get(context, 1));
 		return std::pair{ convert<K>::from_v8(isolate, first), convert<V>::from_v8(isolate, second) };
 	}
 
@@ -1072,8 +1104,8 @@ struct convert<std::pair<K, V>, void>
 		v8::EscapableHandleScope scope(isolate);
 		v8::Local<v8::Context> context = isolate->GetCurrentContext();
 		v8::Local<v8::Array> result = v8::Array::New(isolate, 2);
-		result->Set(context, 0, convert<K>::to_v8(isolate, value.first)).FromJust();
-		result->Set(context, 1, convert<V>::to_v8(isolate, value.second)).FromJust();
+		detail::checked_property(result->CreateDataProperty(context, 0, convert<K>::to_v8(isolate, value.first)));
+		detail::checked_property(result->CreateDataProperty(context, 1, convert<V>::to_v8(isolate, value.second)));
 		return scope.Escape(result);
 	}
 };
@@ -1105,9 +1137,9 @@ struct convert<std::filesystem::path, void>
 		if (auto str = convert<std::string>::try_from_v8(isolate, value))
 		{
 #ifdef WIN32
-			return std::filesystem::path(utf8_to_wide(*std::move(str)));
+			return std::filesystem::path(utf8_to_wide(std::string(std::move(*str))));
 #else
-			return std::filesystem::path(*std::move(str));
+			return std::filesystem::path(std::string(std::move(*str)));
 #endif
 		}
 		return std::nullopt;
@@ -1623,7 +1655,7 @@ v8::Local<v8::Array> to_v8(v8::Isolate* isolate, Iterator begin, Iterator end)
 	v8::Local<v8::Array> result = v8::Array::New(isolate);
 	for (uint32_t idx = 0; begin != end; ++begin, ++idx)
 	{
-		result->Set(context, idx, to_v8(isolate, *begin)).FromJust();
+		detail::checked_property(result->CreateDataProperty(context, idx, to_v8(isolate, *begin)));
 	}
 	return scope.Escape(result);
 }
