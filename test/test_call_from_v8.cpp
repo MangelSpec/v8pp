@@ -212,4 +212,18 @@ void test_call_from_v8()
 	// String default with undefined
 	check_eq("defaults: string undefined uses default",
 		run_script<std::string>(context, "greet('world', undefined)"), "hello world");
+	context.function("optional_default", [](std::optional<int> value)
+		{ return value.value_or(-1); }, v8pp::defaults(std::optional<int>{ 42 }));
+	check_eq("optional/default overlap permits omission", run_script<int>(context, "optional_default()"), 42);
+	check_eq("optional/default overlap permits value", run_script<int>(context, "optional_default(7)"), 7);
+	check_eq("optional/default overlap permits undefined", run_script<int>(context, "optional_default(undefined)"), 42);
+
+	context.function("view_default", [](std::string_view value)
+		{ return std::string(value); }, v8pp::defaults(std::string("default value")));
+	context.function("pointer_default", [](char const* value)
+		{ return std::string(value); }, v8pp::defaults("default pointer"));
+	check_eq("default view retains converted storage", run_script<std::string>(context, "view_default('x'.repeat(4096))"), std::string(4096, 'x'));
+	check_eq("default pointer retains converted storage", run_script<std::string>(context, "pointer_default('y'.repeat(4096))"), std::string(4096, 'y'));
+	check_eq("default view fallback", run_script<std::string>(context, "view_default()"), "default value");
+	check_eq("default pointer fallback", run_script<std::string>(context, "pointer_default()"), "default pointer");
 }

@@ -98,61 +98,54 @@ void property_set(Set& setter, v8::Local<v8::Name> name, v8::Local<v8::Value> va
 
 template<typename Property, typename Traits, typename GetClass>
 void property_get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> const& info)
-try
 {
-	auto&& property = detail::external_data::get<Property>(info.Data());
-
-	if constexpr (std::same_as<GetClass, none>)
+	v8::Isolate* isolate = info.GetIsolate();
+	v8::TryCatch try_catch(isolate);
+	try
 	{
-		property_get(property.getter, name, info);
-	}
-	else
-	{
-		auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(info.GetIsolate(), info.This());
-		if (!obj)
+		auto&& property = detail::external_data::get<Property>(info.Data());
+		if constexpr (std::same_as<GetClass, none>)
 		{
-			info.GetReturnValue().Set(throw_ex(info.GetIsolate(), "accessing property on non-existent C++ object"));
-			return;
+			property_get(property.getter, name, info);
 		}
-		property_get(property.getter, name, info, *obj);
+		else
+		{
+			auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(isolate, info.This());
+			if (!obj) throw std::runtime_error("accessing property on non-existent C++ object");
+			property_get(property.getter, name, info, *obj);
+		}
 	}
-}
-catch (std::exception const& ex)
-{
-	if (info.ShouldThrowOnError())
+	catch (std::exception const& ex)
 	{
-		info.GetReturnValue().Set(throw_ex(info.GetIsolate(), ex.what()));
+		if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 	}
+	if (try_catch.HasCaught()) try_catch.ReThrow();
 }
 
 template<typename Property, typename Traits, typename Set, typename SetClass>
 void property_set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
-try
 {
-	auto&& property = detail::external_data::get<Property>(info.Data());
-
-	if constexpr (std::same_as<SetClass, none>)
+	v8::Isolate* isolate = info.GetIsolate();
+	v8::TryCatch try_catch(isolate);
+	try
 	{
-		property_set(property.setter, name, value, info);
-	}
-	else
-	{
-		auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(info.GetIsolate(), info.This());
-		if (!obj)
+		auto&& property = detail::external_data::get<Property>(info.Data());
+		if constexpr (std::same_as<SetClass, none>)
 		{
-			throw_ex(info.GetIsolate(), "setting property on non-existent C++ object");
-			return;
+			property_set(property.setter, name, value, info);
 		}
-		property_set(property.setter, name, value, info, *obj);
+		else
+		{
+			auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(isolate, info.This());
+			if (!obj) throw std::runtime_error("setting property on non-existent C++ object");
+			property_set(property.setter, name, value, info, *obj);
+		}
 	}
-}
-catch (std::exception const& ex)
-{
-	if (info.ShouldThrowOnError())
+	catch (std::exception const& ex)
 	{
-		throw_ex(info.GetIsolate(), ex.what());
+		if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 	}
-	// TODO: info.GetReturnValue().Set(false);
+	if (try_catch.HasCaught()) try_catch.ReThrow();
 }
 
 } // namespace v8pp::detail

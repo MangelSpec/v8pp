@@ -23,8 +23,36 @@ static int negate_int(int a)
 	return -a;
 }
 
+template<typename Traits>
+void test_wrapped_overload_selection()
+{
+	struct A
+	{
+	};
+	struct B
+	{
+	};
+	v8pp::context context;
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	v8pp::class_<A, Traits> a(isolate);
+	v8pp::class_<B, Traits> b(isolate);
+	a.template ctor<>();
+	b.template ctor<>();
+	context.class_("OverloadA", a).class_("OverloadB", b);
+	using APointer = typename Traits::template object_pointer_type<A>;
+	using BPointer = typename Traits::template object_pointer_type<B>;
+	context.value("wrapped_overload", v8pp::wrap_overload<Traits>(isolate, "wrapped_overload", [](APointer value)
+										  { return value ? 1 : -1; }, [](BPointer value)
+										  { return value ? 2 : -2; }));
+	check_eq("overload selects actual wrapped type", run_script<int>(context, "wrapped_overload(new OverloadB())"), 2);
+	check_eq("overload rejects unrelated objects", run_script<bool>(context, "try { wrapped_overload({}); false; } catch (e) { true; }"), true);
+}
+
 void test_overload()
 {
+	test_wrapped_overload_selection<v8pp::raw_ptr_traits>();
+	test_wrapped_overload_selection<v8pp::shared_ptr_traits>();
 	v8pp::context context;
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
@@ -90,6 +118,7 @@ void test_overload()
 
 		check_eq("overload: defaults int both", run_script<int>(context, "defaults_overload(3, 7)"), 10);
 		check_eq("overload: defaults int default", run_script<int>(context, "defaults_overload(5)"), 15);
+		check_eq("overload: explicit undefined uses default", run_script<int>(context, "defaults_overload(5, undefined)"), 15);
 		check_eq("overload: defaults string", run_script<std::string>(context, "defaults_overload('hi')"), "hi");
 	}
 
@@ -139,4 +168,44 @@ void test_overload()
 		check_eq("overload: selector 1 arg", run_script<int>(context, "var m = new Multi(); m.compute(5)"), 10);
 		check_eq("overload: selector 2 args", run_script<int>(context, "m.compute(3, 4)"), 7);
 	}
+	context.function("optional_default_overload",
+		v8pp::with_defaults([](std::optional<int> value)
+			{ return value.value_or(-1); }, v8pp::defaults(std::optional<int>{ 42 })),
+		[]()
+		{ return -2; });
+	check_eq("overload optional default does not underflow", run_script<int>(context, "optional_default_overload()"), 42);
+	check_eq("overload optional default accepts value", run_script<int>(context, "optional_default_overload(7)"), 7);
+
+	context.function("stateful_overload", [count = 0](int) mutable
+		{ return ++count; }, []()
+		{ return -1; });
+	check_eq("overload retains callable state", run_script<int>(context, "stateful_overload(1); stateful_overload(1)"), 2);
+	context.function("stateful_default_overload",
+		v8pp::with_defaults([count = 0](int) mutable
+			{ return ++count; }, v8pp::defaults(0)),
+		[](int, int)
+		{ return -1; });
+	check_eq("default overload retains callable state", run_script<int>(context, "stateful_default_overload(); stateful_default_overload()"), 2);
+
+	int fallback_calls = 0;
+	context.function("throwing_overload", [](int) -> int
+		{ throw std::runtime_error("selected body failure"); }, [&fallback_calls](double)
+		{ ++fallback_calls; return -1; });
+	check_eq("overload propagates selected body failure", run_script<std::string>(context, "try { throwing_overload(1); 'missing'; } catch (e) { e.message; }"), "selected body failure");
+	check_eq("overload never falls back after body failure", fallback_calls, 0);
+
+	context.function("container_overload", [](std::vector<int> value)
+		{ return int(value.size()); }, [](std::vector<std::string> value)
+		{ return int(value.size()) + 10; });
+	check_eq("overload falls back on conversion mismatch", run_script<int>(context, "container_overload(['a', 'b'])"), 12);
+
+	context.function("throwing_conversion_overload", [](std::string)
+		{ return 1; }, [&fallback_calls](v8::Local<v8::Value>)
+		{ ++fallback_calls; return 2; });
+	check("overload preserves conversion exception identity", run_script<bool>(context, R"(
+		(() => { const original = {}; try {
+			throwing_conversion_overload({ toString() { throw original; } });
+		} catch (e) { return e === original; } return false; })()
+	)"));
+	check_eq("JavaScript conversion exception prevents fallback", fallback_calls, 0);
 }

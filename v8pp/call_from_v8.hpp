@@ -39,6 +39,11 @@ struct is_defaults<defaults<Defs...>> : std::true_type
 
 namespace v8pp::detail {
 
+struct argument_conversion_error : std::runtime_error
+{
+	using std::runtime_error::runtime_error;
+};
+
 template<typename>
 struct optional_count;
 
@@ -74,6 +79,17 @@ struct call_from_v8_traits
 	using arg_type = typename tuple_element < Index + is_mem_fun,
 		  Index<(arg_count + offset)>::type;
 
+	template<size_t Count, size_t... Indices>
+	static constexpr size_t required_arg_count_impl(std::index_sequence<Indices...>)
+	{
+		size_t result = 0;
+		((!is_optional<std::remove_cvref_t<arg_type<Indices + offset>>>::value ? result = Indices + 1 : result), ...);
+		return result;
+	}
+
+	template<size_t Count = arg_count>
+	static constexpr size_t required_arg_count = required_arg_count_impl<Count>(std::make_index_sequence<Count>{});
+
 	template<typename Arg, typename Traits,
 		typename T = std::remove_reference_t<Arg>,
 		typename U = std::remove_pointer_t<T>>
@@ -100,16 +116,37 @@ template<typename F, size_t Offset = 0, typename CallTraits = call_from_v8_trait
 inline constexpr bool is_first_arg_isolate = CallTraits::arg_count != (Offset + 0) &&
 	std::same_as<typename CallTraits::template arg_type<Offset>, v8::Isolate*>;
 
-template<typename Traits, typename F, typename CallTraits, size_t... Indices, typename... ObjArg>
+template<typename Traits, bool MarkConversion, typename F, typename CallTraits, size_t... Indices, typename... ObjArg>
 decltype(auto) call_from_v8_impl(F&& func, v8::FunctionCallbackInfo<v8::Value> const& args,
 	CallTraits, std::index_sequence<Indices...>, ObjArg&&... obj)
 {
 	(void)args;
-	return (std::invoke(func, std::forward<ObjArg>(obj)...,
-		CallTraits::template arg_from_v8<Indices + CallTraits::offset, Traits>(args)...));
+	if constexpr (MarkConversion)
+	{
+		auto converted = [&]
+		{
+			try
+			{
+				return std::tuple<decltype(CallTraits::template arg_from_v8<Indices + CallTraits::offset, Traits>(args))...>{
+					CallTraits::template arg_from_v8<Indices + CallTraits::offset, Traits>(args)...
+				};
+			}
+			catch (std::exception const& ex)
+			{
+				throw argument_conversion_error(ex.what());
+			}
+		}();
+		return std::apply([&](auto&&... values) -> decltype(auto)
+			{ return std::invoke(func, std::forward<ObjArg>(obj)..., std::forward<decltype(values)>(values)...); }, std::move(converted));
+	}
+	else
+	{
+		return (std::invoke(func, std::forward<ObjArg>(obj)...,
+			CallTraits::template arg_from_v8<Indices + CallTraits::offset, Traits>(args)...));
+	}
 }
 
-template<typename Traits, typename F, typename... ObjArg>
+template<typename Traits, bool MarkConversion = false, typename F, typename... ObjArg>
 requires(sizeof...(ObjArg) == 0 || (!v8pp::is_defaults<std::remove_cvref_t<ObjArg>>::value && ...))
 decltype(auto) call_from_v8(F&& func, v8::FunctionCallbackInfo<v8::Value> const& args, ObjArg&... obj)
 {
@@ -131,7 +168,7 @@ decltype(auto) call_from_v8(F&& func, v8::FunctionCallbackInfo<v8::Value> const&
 		using indices = std::make_index_sequence<call_traits::arg_count>;
 
 		size_t const arg_count = args.Length();
-		if (arg_count > call_traits::arg_count || arg_count < call_traits::arg_count - call_traits::optional_arg_count)
+		if (arg_count > call_traits::arg_count || arg_count < call_traits::template required_arg_count<>)
 		{
 			throw std::runtime_error(
 				"Argument count does not match function definition. Expected " +
@@ -141,12 +178,12 @@ decltype(auto) call_from_v8(F&& func, v8::FunctionCallbackInfo<v8::Value> const&
 
 		if constexpr (with_isolate)
 		{
-			return (call_from_v8_impl<Traits>(std::forward<F>(func), args,
+			return (call_from_v8_impl<Traits, MarkConversion>(std::forward<F>(func), args,
 				call_traits{}, indices{}, obj..., args.GetIsolate()));
 		}
 		else
 		{
-			return (call_from_v8_impl<Traits>(std::forward<F>(func), args,
+			return (call_from_v8_impl<Traits, MarkConversion>(std::forward<F>(func), args,
 				call_traits{}, indices{}, obj...));
 		}
 	}
@@ -167,34 +204,67 @@ decltype(auto) arg_or_default(v8::FunctionCallbackInfo<v8::Value> const& args,
 	else
 	{
 		// This parameter has a default value available.
-		// Both branches must return the same value_type (arg_from_v8 may return a
-		// proxy type like convertible_string, so explicit cast is needed).
 		using arg_type = typename CallTraits::template arg_type<Index + CallTraits::offset>;
 		using value_type = std::remove_cv_t<std::remove_reference_t<arg_type>>;
 
-		if (static_cast<size_t>(args.Length()) <= Index || args[Index]->IsUndefined())
+		if constexpr (is_string<value_type>::value)
 		{
-			constexpr size_t def_index = Index - DefaultsStart;
-			return static_cast<value_type>(std::get<def_index>(defaults_tuple));
+			// Keep the converted string alive until invocation, including views and pointers.
+			using converter = convert<value_type>;
+			if (static_cast<size_t>(args.Length()) <= Index || args[Index]->IsUndefined())
+			{
+				using string_type = typename converter::from_type;
+				using view_type = std::basic_string_view<typename string_type::value_type, typename string_type::traits_type>;
+				return string_type(view_type(std::get<Index - DefaultsStart>(defaults_tuple)));
+			}
+			return CallTraits::template arg_from_v8<Index + CallTraits::offset, Traits>(args);
 		}
-		return static_cast<value_type>(
-			CallTraits::template arg_from_v8<Index + CallTraits::offset, Traits>(args));
+		else
+		{
+			if (static_cast<size_t>(args.Length()) <= Index || args[Index]->IsUndefined())
+			{
+				return static_cast<value_type>(std::get<Index - DefaultsStart>(defaults_tuple));
+			}
+			return static_cast<value_type>(
+				CallTraits::template arg_from_v8<Index + CallTraits::offset, Traits>(args));
+		}
 	}
 }
 
-template<typename Traits, typename F, typename CallTraits, typename DefaultsTuple,
+template<typename Traits, bool MarkConversion, typename F, typename CallTraits, typename DefaultsTuple,
 	size_t DefaultsStart, size_t... Indices, typename... ObjArg>
 decltype(auto) call_from_v8_defaults_impl(F&& func, v8::FunctionCallbackInfo<v8::Value> const& args,
 	DefaultsTuple const& defaults_tuple,
 	CallTraits, std::index_sequence<Indices...>, ObjArg&&... obj)
 {
 	(void)args;
-	return (std::invoke(func, std::forward<ObjArg>(obj)...,
-		arg_or_default<Traits, CallTraits, Indices, DefaultsStart>(args, defaults_tuple)...));
+	if constexpr (MarkConversion)
+	{
+		auto converted = [&]
+		{
+			try
+			{
+				return std::tuple<decltype(arg_or_default<Traits, CallTraits, Indices, DefaultsStart>(args, defaults_tuple))...>{
+					arg_or_default<Traits, CallTraits, Indices, DefaultsStart>(args, defaults_tuple)...
+				};
+			}
+			catch (std::exception const& ex)
+			{
+				throw argument_conversion_error(ex.what());
+			}
+		}();
+		return std::apply([&](auto&&... values) -> decltype(auto)
+			{ return std::invoke(func, std::forward<ObjArg>(obj)..., std::forward<decltype(values)>(values)...); }, std::move(converted));
+	}
+	else
+	{
+		return (std::invoke(func, std::forward<ObjArg>(obj)...,
+			arg_or_default<Traits, CallTraits, Indices, DefaultsStart>(args, defaults_tuple)...));
+	}
 }
 
 /// call_from_v8 with default parameter values
-template<typename Traits, typename F, typename... Defs, typename... ObjArg>
+template<typename Traits, bool MarkConversion = false, typename F, typename... Defs, typename... ObjArg>
 decltype(auto) call_from_v8(F&& func, v8::FunctionCallbackInfo<v8::Value> const& args,
 	v8pp::defaults<Defs...> const& defs, ObjArg&... obj)
 {
@@ -218,7 +288,7 @@ decltype(auto) call_from_v8(F&& func, v8::FunctionCallbackInfo<v8::Value> const&
 			"More defaults than function parameters");
 
 		constexpr size_t defaults_start = call_traits::arg_count - num_defaults;
-		constexpr size_t min_args = defaults_start - call_traits::optional_arg_count;
+		constexpr size_t min_args = call_traits::template required_arg_count<defaults_start>;
 
 		size_t const arg_count = args.Length();
 		if (arg_count > call_traits::arg_count || arg_count < min_args)
@@ -232,13 +302,13 @@ decltype(auto) call_from_v8(F&& func, v8::FunctionCallbackInfo<v8::Value> const&
 
 		if constexpr (with_isolate)
 		{
-			return (call_from_v8_defaults_impl<Traits, F, call_traits, decltype(defs.values),
+			return (call_from_v8_defaults_impl<Traits, MarkConversion, F, call_traits, decltype(defs.values),
 				defaults_start>(std::forward<F>(func), args,
 				defs.values, call_traits{}, indices{}, obj..., args.GetIsolate()));
 		}
 		else
 		{
-			return (call_from_v8_defaults_impl<Traits, F, call_traits, decltype(defs.values),
+			return (call_from_v8_defaults_impl<Traits, MarkConversion, F, call_traits, decltype(defs.values),
 				defaults_start>(std::forward<F>(func), args,
 				defs.values, call_traits{}, indices{}, obj...));
 		}

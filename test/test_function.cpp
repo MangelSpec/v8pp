@@ -1,5 +1,6 @@
 #include "v8pp/function.hpp"
 #include "v8pp/context.hpp"
+#include "v8pp/module.hpp"
 
 #include "test.hpp"
 
@@ -67,4 +68,30 @@ void test_function()
 	std::function<int(int)> fun = f;
 	context.function("fun", fun);
 	check_eq("fun", run_script<int>(context, "fun(42)"), 42);
+	check("function preserves original conversion exception", run_script<bool>(context, R"(
+		(() => { const original = {}; try { g({ toString() { throw original; } }); }
+		catch (e) { return e === original; } return false; })()
+	)"));
+	context.function("default_exception", [](std::string value)
+		{ return value; }, v8pp::defaults("default"));
+	check("function with defaults preserves original exception", run_script<bool>(context, R"(
+		(() => { const original = {}; try { default_exception({ toString() { throw original; } }); }
+		catch (e) { return e === original; } return false; })()
+	)"));
+
+	int module_value = 7;
+	std::string module_string;
+	v8pp::module variables(isolate);
+	variables.var("value", module_value).var("text", module_string).property("throwing", []() -> int
+		{ throw std::runtime_error("getter failed"); }, [](int)
+		{ throw std::runtime_error("setter failed"); });
+	context.module("variables", variables);
+	check("module variable conversion failures are JavaScript exceptions", run_script<bool>(context, "try { variables.value = 'invalid'; false; } catch (e) { e instanceof Error; }"));
+	check_eq("failed variable conversion preserves value", module_value, 7);
+	check_eq("property getter failure propagates in sloppy mode", run_script<std::string>(context, "try { variables.throwing; 'missing'; } catch (e) { e.message; }"), "getter failed");
+	check_eq("property setter failure propagates in sloppy mode", run_script<std::string>(context, "try { variables.throwing = 1; 'missing'; } catch (e) { e.message; }"), "setter failed");
+	check("module variable preserves original conversion exception", run_script<bool>(context, R"(
+		(() => { const original = {}; try { variables.text = { toString() { throw original; } }; }
+		catch (e) { return e === original; } return false; })()
+	)"));
 }

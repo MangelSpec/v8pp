@@ -112,7 +112,7 @@ public:
 	requires(detail::is_callable<std::decay_t<F2>>::value || std::is_member_function_pointer_v<std::decay_t<F2>> || is_overload_entry<std::decay_t<F2>>::value)
 	context& function(std::string_view name, F1&& f1, F2&& f2, Fs&&... fs)
 	{
-		return value(name, wrap_overload(isolate_, name, std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
+		return value(name, wrap_overload<Traits>(isolate_, name, std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...));
 	}
 
 	/// Set class to the context global object

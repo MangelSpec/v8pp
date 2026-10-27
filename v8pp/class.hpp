@@ -481,10 +481,9 @@ public:
 			"Constructor factory must return object_pointer_type");
 
 		class_info_.set_ctor(
-			[func = F(std::forward<Function>(func)), defs = std::move(defs)](v8::FunctionCallbackInfo<v8::Value> const& args)
+			[func = F(std::forward<Function>(func)), defs = std::move(defs)](v8::FunctionCallbackInfo<v8::Value> const& args) mutable
 			{
-				F f = func; // copy from captured const
-				auto object = detail::call_from_v8<Traits>(std::move(f), args, defs);
+				auto object = detail::call_from_v8<Traits>(std::move(func), args, defs);
 				return std::make_pair(pointer_type(object), Traits::object_size(object));
 			});
 		return *this;
@@ -506,54 +505,83 @@ public:
 			[set = Set{ std::make_tuple(
 				 detail::make_overload_entry(std::forward<F1>(f1)),
 				 detail::make_overload_entry(std::forward<F2>(f2)),
-				 detail::make_overload_entry(std::forward<Fs>(fs))...) }](v8::FunctionCallbackInfo<v8::Value> const& args)
+				 detail::make_overload_entry(std::forward<Fs>(fs))...) }](v8::FunctionCallbackInfo<v8::Value> const& args) mutable
 			{
 				v8::Isolate* isolate = args.GetIsolate();
-				size_t const arg_count = args.Length();
-				bool matched = false;
-				object_pointer_type result{};
-				std::string errors;
-
-				std::apply([&](auto const&... entries)
-					{ ((matched || [&]
-						   {
-							   using Entry = std::decay_t<decltype(entries)>;
-							   using F = typename detail::entry_func_type<Entry>::type;
-
-							   constexpr size_t min = detail::overload_arg_range<Entry>::min_args;
-							   constexpr size_t max = detail::overload_arg_range<Entry>::max_args;
-							   if (arg_count < min || arg_count > max)
-								   return false;
-
-							   if (arg_count > 0 && !detail::overload_types_match<F, Traits>(isolate, args, arg_count))
-								   return false;
-
-							   try
-							   {
-								   result = object_pointer_type(detail::call_ctor_entry<Traits>(entries, args));
-								   matched = true;
-								   return true;
-							   }
-							   catch (std::exception const& ex)
-							   {
-								   if (!errors.empty()) errors += "; ";
-								   errors += ex.what();
-								   return false;
-							   }
-						   }()),
-						  ...); }, set.entries);
-
-				if (!matched)
+				v8::TryCatch try_catch(isolate);
+				try
 				{
-					std::string msg = "No matching constructor overload for " + std::to_string(arg_count) + " argument(s)";
-					if (!errors.empty())
-					{
-						msg += ". Tried: " + errors;
-					}
-					throw std::runtime_error(msg);
-				}
+					size_t const arg_count = args.Length();
+					bool matched = false;
+					bool js_exception = false;
+					object_pointer_type result{};
+					std::string errors;
 
-				return std::make_pair(pointer_type(result), Traits::object_size(result));
+					std::apply([&](auto&... entries)
+						{ ((matched || js_exception || [&]
+							   {
+								   using Entry = std::decay_t<decltype(entries)>;
+								   using F = typename detail::entry_func_type<Entry>::type;
+
+								   constexpr size_t min = detail::overload_arg_range<Entry>::min_args;
+								   constexpr size_t max = detail::overload_arg_range<Entry>::max_args;
+								   if (arg_count < min || arg_count > max)
+									   return false;
+
+								   if (arg_count > 0 && !detail::overload_types_match<F, Traits, detail::overload_arg_range<Entry>::num_defaults>(isolate, args, arg_count))
+									   return false;
+
+								   try
+								   {
+									   result = object_pointer_type(detail::call_ctor_entry<Traits>(entries, args));
+									   matched = true;
+									   return true;
+								   }
+								   catch (detail::argument_conversion_error const& ex)
+								   {
+									   if (try_catch.HasCaught())
+									   {
+										   js_exception = true;
+										   return true;
+									   }
+									   if (!errors.empty()) errors += "; ";
+									   errors += ex.what();
+									   return false;
+								   }
+							   }()),
+							  ...); }, set.entries);
+
+					if (js_exception)
+					{
+						try_catch.ReThrow();
+						return std::make_pair(pointer_type{}, size_t{});
+					}
+					if (!matched)
+					{
+						std::string msg = "No matching constructor overload for " + std::to_string(arg_count) + " argument(s)";
+						if (!errors.empty())
+						{
+							msg += ". Tried: " + errors;
+						}
+						throw std::runtime_error(msg);
+					}
+
+					if (try_catch.HasCaught())
+					{
+						try_catch.ReThrow();
+						return std::make_pair(pointer_type{}, size_t{});
+					}
+					return std::make_pair(pointer_type(result), Traits::object_size(result));
+				}
+				catch (...)
+				{
+					if (try_catch.HasCaught())
+					{
+						try_catch.ReThrow();
+						return std::make_pair(pointer_type{}, size_t{});
+					}
+					throw;
+				}
 			});
 		return *this;
 	}
@@ -685,7 +713,8 @@ public:
 		class_info_.js_function_template()
 			->PrototypeTemplate()
 			->SetAccessor(v8_name, getter, setter, data,
-				v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
+				v8::DEFAULT,
+				v8::PropertyAttribute(v8::DontDelete),
 				v8::SideEffectType::kHasNoSideEffect,
 				v8::SideEffectType::kHasSideEffectToReceiver);
 #endif
@@ -763,7 +792,8 @@ public:
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
 		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data,
-			v8::DEFAULT, v8::PropertyAttribute(v8::DontDelete),
+			v8::DEFAULT,
+			v8::PropertyAttribute(v8::DontDelete),
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #endif
 		return *this;
@@ -1124,21 +1154,22 @@ private:
 	{
 		v8::Isolate* isolate = info.GetIsolate();
 
+		v8::TryCatch try_catch(isolate);
 		try
 		{
 			auto self = unwrap_object(isolate, info.This());
 			if (!self)
 			{
-				info.GetReturnValue().Set(throw_ex(isolate, "accessing member on non-existent C++ object"));
-				return;
+				throw std::runtime_error("accessing member on non-existent C++ object");
 			}
 			Attribute attr = detail::external_data::get<Attribute>(info.Data());
 			info.GetReturnValue().Set(to_v8(isolate, (*self).*attr));
 		}
 		catch (std::exception const& ex)
 		{
-			info.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 	template<typename Attribute>
@@ -1147,13 +1178,13 @@ private:
 	{
 		v8::Isolate* isolate = info.GetIsolate();
 
+		v8::TryCatch try_catch(isolate);
 		try
 		{
 			auto self = unwrap_object(isolate, info.This());
 			if (!self)
 			{
-				throw_ex(isolate, "setting member on non-existent C++ object");
-				return;
+				throw std::runtime_error("setting member on non-existent C++ object");
 			}
 			Attribute ptr = detail::external_data::get<Attribute>(info.Data());
 			using attr_type = typename detail::function_traits<Attribute>::return_type;
@@ -1161,12 +1192,10 @@ private:
 		}
 		catch (std::exception const& ex)
 		{
-			if (info.ShouldThrowOnError())
-			{
-				throw_ex(isolate, ex.what());
-			}
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 			// TODO: info.GetReturnValue().Set(false);
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
@@ -1177,21 +1206,22 @@ private:
 	{
 		v8::Isolate* isolate = args.GetIsolate();
 
+		v8::TryCatch try_catch(isolate);
 		try
 		{
 			auto self = unwrap_object(isolate, args.This());
 			if (!self)
 			{
-				args.GetReturnValue().Set(throw_ex(isolate, "accessing member on non-existent C++ object"));
-				return;
+				throw std::runtime_error("accessing member on non-existent C++ object");
 			}
 			Attribute attr = detail::external_data::get<Attribute>(args.Data());
 			args.GetReturnValue().Set(to_v8(isolate, (*self).*attr));
 		}
 		catch (std::exception const& ex)
 		{
-			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 	/// FunctionCallback-signature adapter for member variable setter.
@@ -1201,13 +1231,13 @@ private:
 	{
 		v8::Isolate* isolate = args.GetIsolate();
 
+		v8::TryCatch try_catch(isolate);
 		try
 		{
 			auto self = unwrap_object(isolate, args.This());
 			if (!self)
 			{
-				throw_ex(isolate, "setting member on non-existent C++ object");
-				return;
+				throw std::runtime_error("setting member on non-existent C++ object");
 			}
 			Attribute ptr = detail::external_data::get<Attribute>(args.Data());
 			using attr_type = typename detail::function_traits<Attribute>::return_type;
@@ -1215,8 +1245,9 @@ private:
 		}
 		catch (std::exception const& ex)
 		{
-			throw_ex(isolate, ex.what());
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 	/// FunctionCallback adapter for property getter (V8 12.9+).
@@ -1227,6 +1258,7 @@ private:
 	{
 		v8::Isolate* isolate = args.GetIsolate();
 
+		v8::TryCatch try_catch(isolate);
 		try
 		{
 			auto&& prop = detail::external_data::get<Property>(args.Data());
@@ -1249,8 +1281,7 @@ private:
 				auto obj = class_<GetClass, Traits>::unwrap_object(isolate, args.This());
 				if (!obj)
 				{
-					args.GetReturnValue().Set(throw_ex(isolate, "accessing property on non-existent C++ object"));
-					return;
+					throw std::runtime_error("accessing property on non-existent C++ object");
 				}
 				constexpr size_t offset = std::is_member_function_pointer_v<Get> ? 0 : 1;
 				if constexpr (detail::is_isolate_getter<Get, offset>)
@@ -1265,8 +1296,9 @@ private:
 		}
 		catch (std::exception const& ex)
 		{
-			args.GetReturnValue().Set(throw_ex(args.GetIsolate(), ex.what()));
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 	/// FunctionCallback adapter for property setter (V8 12.9+).
@@ -1277,6 +1309,7 @@ private:
 	{
 		v8::Isolate* isolate = args.GetIsolate();
 
+		v8::TryCatch try_catch(isolate);
 		try
 		{
 			auto&& prop = detail::external_data::get<Property>(args.Data());
@@ -1285,13 +1318,14 @@ private:
 			if constexpr (std::same_as<SetClass, detail::none>)
 			{
 				constexpr size_t offset = 0;
-				using value_type = typename detail::call_from_v8_traits<Set>::template arg_type<0 + offset>;
 				if constexpr (detail::is_isolate_setter<Set, offset>)
 				{
+					using value_type = typename detail::call_from_v8_traits<Set>::template arg_type<1 + offset>;
 					std::invoke(prop.setter, isolate, v8pp::from_v8<value_type>(isolate, value));
 				}
 				else if constexpr (detail::is_setter<Set, offset>)
 				{
+					using value_type = typename detail::call_from_v8_traits<Set>::template arg_type<0 + offset>;
 					std::invoke(prop.setter, v8pp::from_v8<value_type>(isolate, value));
 				}
 			}
@@ -1300,8 +1334,7 @@ private:
 				auto obj = class_<SetClass, Traits>::unwrap_object(isolate, args.This());
 				if (!obj)
 				{
-					throw_ex(isolate, "setting property on non-existent C++ object");
-					return;
+					throw std::runtime_error("setting property on non-existent C++ object");
 				}
 				constexpr size_t offset = std::is_member_function_pointer_v<Set> ? 0 : 1;
 				if constexpr (detail::is_isolate_setter<Set, offset>)
@@ -1318,8 +1351,9 @@ private:
 		}
 		catch (std::exception const& ex)
 		{
-			throw_ex(args.GetIsolate(), ex.what());
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 #endif
 };

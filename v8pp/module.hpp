@@ -258,8 +258,17 @@ private:
 	{
 		v8::Isolate* isolate = info.GetIsolate();
 
-		Variable* var = detail::external_data::get<Variable*>(info.Data());
-		info.GetReturnValue().Set(to_v8(isolate, *var));
+		v8::TryCatch try_catch(isolate);
+		try
+		{
+			Variable* var = detail::external_data::get<Variable*>(info.Data());
+			info.GetReturnValue().Set(to_v8(isolate, *var));
+		}
+		catch (std::exception const& ex)
+		{
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
+		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 	template<typename Variable>
@@ -267,8 +276,17 @@ private:
 	{
 		v8::Isolate* isolate = info.GetIsolate();
 
-		Variable* var = detail::external_data::get<Variable*>(info.Data());
-		*var = v8pp::from_v8<Variable>(isolate, value);
+		v8::TryCatch try_catch(isolate);
+		try
+		{
+			Variable* var = detail::external_data::get<Variable*>(info.Data());
+			*var = v8pp::from_v8<Variable>(isolate, value);
+		}
+		catch (std::exception const& ex)
+		{
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
+		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 	v8::Isolate* isolate_;

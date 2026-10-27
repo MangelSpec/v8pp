@@ -70,7 +70,8 @@ struct overload_arg_range<overload_entry<F, void>>
 	static constexpr size_t offset = is_first_arg_isolate<F> ? 1 : 0;
 	using traits = call_from_v8_traits<F, offset>;
 	static constexpr size_t max_args = traits::arg_count;
-	static constexpr size_t min_args = max_args - traits::optional_arg_count;
+	static constexpr size_t num_defaults = 0;
+	static constexpr size_t min_args = traits::template required_arg_count<>;
 };
 
 template<typename F, typename... Defs>
@@ -80,7 +81,8 @@ struct overload_arg_range<overload_entry<F, defaults<Defs...>>>
 	using traits = call_from_v8_traits<F, offset>;
 	static constexpr size_t max_args = traits::arg_count;
 	static constexpr size_t num_defaults = sizeof...(Defs);
-	static constexpr size_t min_args = max_args - num_defaults - traits::optional_arg_count;
+	static_assert(num_defaults <= max_args, "More defaults than function parameters");
+	static constexpr size_t min_args = traits::template required_arg_count<max_args - num_defaults>;
 };
 
 /// Check if a V8 value is valid for a given C++ arg type using convert::is_valid
@@ -95,25 +97,39 @@ bool arg_type_matches(v8::Isolate* isolate, v8::Local<v8::Value> value)
 			typename Traits::template convert_ptr<U>,
 			typename Traits::template convert_ref<U>>,
 		convert<std::remove_cv_t<T>>>;
-	return converter::is_valid(isolate, value);
+	if constexpr (is_wrapped_class<std::remove_cv_t<U>>::value)
+	{
+		return !value.IsEmpty() && value->IsObject() &&
+			class_<std::remove_cv_t<U>, Traits>::unwrap_object(isolate, value) != nullptr;
+	}
+	else if constexpr (is_shared_ptr<T>::value)
+	{
+		using element_type = std::remove_cv_t<typename T::element_type>;
+		return !value.IsEmpty() && value->IsObject() &&
+			class_<element_type, shared_ptr_traits>::unwrap_object(isolate, value) != nullptr;
+	}
+	else
+	{
+		return converter::is_valid(isolate, value);
+	}
 }
 
 /// Check provided JS args against a function's expected types.
 /// Uses compile-time index sequence for all possible args, skips unprovided ones at runtime.
-template<typename F, typename Traits, size_t Offset, size_t... Indices>
+template<typename F, typename Traits, size_t Offset, size_t DefaultsStart, size_t... Indices>
 bool check_arg_types(v8::Isolate* isolate, v8::FunctionCallbackInfo<v8::Value> const& args,
 	size_t provided_count, std::index_sequence<Indices...>)
 {
 	using traits = call_from_v8_traits<F, Offset>;
 	// Only validate args that were actually provided by JS
-	return ((Indices >= provided_count ||
+	return ((Indices >= provided_count || (Indices >= DefaultsStart && args[Indices]->IsUndefined()) ||
 				arg_type_matches<typename traits::template arg_type<Indices + Offset>, Traits>(
 					isolate, args[Indices])) &&
 		...);
 }
 
 /// Check if JS args match a function's expected types (arity already validated)
-template<typename F, typename Traits>
+template<typename F, typename Traits, size_t NumDefaults = 0>
 bool overload_types_match(v8::Isolate* isolate, v8::FunctionCallbackInfo<v8::Value> const& args,
 	size_t arg_count)
 {
@@ -123,20 +139,20 @@ bool overload_types_match(v8::Isolate* isolate, v8::FunctionCallbackInfo<v8::Val
 	if (arg_count == 0)
 		return true;
 
-	return check_arg_types<F, Traits, offset>(isolate, args, arg_count,
+	return check_arg_types<F, Traits, offset, traits::arg_count - NumDefaults>(isolate, args, arg_count,
 		std::make_index_sequence<traits::arg_count>{});
 }
 
 /// Try to invoke one overload entry (no defaults). Returns true on success.
 template<typename Traits, typename F>
-bool try_invoke_entry(overload_entry<F, void> const& entry,
+bool try_invoke_entry(overload_entry<F, void>& entry,
 	v8::FunctionCallbackInfo<v8::Value> const& args)
 {
 	using FTraits = function_traits<F>;
 	v8::Isolate* isolate = args.GetIsolate();
 	// Copy func — entry is const& so entry.func is const, but call_from_v8
 	// needs a non-const-qualified type for function_traits to work
-	F func = entry.func;
+	F& func = entry.func;
 
 	if constexpr (std::is_member_function_pointer_v<F>)
 	{
@@ -146,28 +162,28 @@ bool try_invoke_entry(overload_entry<F, void> const& entry,
 
 		if constexpr (std::same_as<typename FTraits::return_type, void>)
 		{
-			call_from_v8<Traits>(std::move(func), args, *obj);
+			call_from_v8<Traits, true>(std::move(func), args, *obj);
 		}
 		else
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
 			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits>(std::move(func), args, *obj)));
+				call_from_v8<Traits, true>(std::move(func), args, *obj)));
 		}
 	}
 	else
 	{
 		if constexpr (std::same_as<typename FTraits::return_type, void>)
 		{
-			call_from_v8<Traits>(std::move(func), args);
+			call_from_v8<Traits, true>(std::move(func), args);
 		}
 		else
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
 			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits>(std::move(func), args)));
+				call_from_v8<Traits, true>(std::move(func), args)));
 		}
 	}
 	return true;
@@ -175,12 +191,12 @@ bool try_invoke_entry(overload_entry<F, void> const& entry,
 
 /// Try to invoke one overload entry (with defaults). Returns true on success.
 template<typename Traits, typename F, typename... Defs>
-bool try_invoke_entry(overload_entry<F, defaults<Defs...>> const& entry,
+bool try_invoke_entry(overload_entry<F, defaults<Defs...>>& entry,
 	v8::FunctionCallbackInfo<v8::Value> const& args)
 {
 	using FTraits = function_traits<F>;
 	v8::Isolate* isolate = args.GetIsolate();
-	F func = entry.func;
+	F& func = entry.func;
 
 	if constexpr (std::is_member_function_pointer_v<F>)
 	{
@@ -190,28 +206,28 @@ bool try_invoke_entry(overload_entry<F, defaults<Defs...>> const& entry,
 
 		if constexpr (std::same_as<typename FTraits::return_type, void>)
 		{
-			call_from_v8<Traits>(std::move(func), args, entry.defs, *obj);
+			call_from_v8<Traits, true>(std::move(func), args, entry.defs, *obj);
 		}
 		else
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
 			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits>(std::move(func), args, entry.defs, *obj)));
+				call_from_v8<Traits, true>(std::move(func), args, entry.defs, *obj)));
 		}
 	}
 	else
 	{
 		if constexpr (std::same_as<typename FTraits::return_type, void>)
 		{
-			call_from_v8<Traits>(std::move(func), args, entry.defs);
+			call_from_v8<Traits, true>(std::move(func), args, entry.defs);
 		}
 		else
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
 			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits>(std::move(func), args, entry.defs)));
+				call_from_v8<Traits, true>(std::move(func), args, entry.defs)));
 		}
 	}
 	return true;
@@ -220,24 +236,24 @@ bool try_invoke_entry(overload_entry<F, defaults<Defs...>> const& entry,
 /// Call a constructor factory entry (no defaults), returning the constructed object.
 /// Factory must be a free function or callable, not a member function pointer.
 template<typename Traits, typename F>
-auto call_ctor_entry(overload_entry<F, void> const& entry,
+auto call_ctor_entry(overload_entry<F, void>& entry,
 	v8::FunctionCallbackInfo<v8::Value> const& args)
 {
 	static_assert(!std::is_member_function_pointer_v<F>,
 		"Constructor factory must be a free function or callable, not a member function pointer");
-	F func = entry.func;
-	return call_from_v8<Traits>(std::move(func), args);
+	F& func = entry.func;
+	return call_from_v8<Traits, true>(std::move(func), args);
 }
 
 /// Call a constructor factory entry (with defaults), returning the constructed object.
 template<typename Traits, typename F, typename... Defs>
-auto call_ctor_entry(overload_entry<F, defaults<Defs...>> const& entry,
+auto call_ctor_entry(overload_entry<F, defaults<Defs...>>& entry,
 	v8::FunctionCallbackInfo<v8::Value> const& args)
 {
 	static_assert(!std::is_member_function_pointer_v<F>,
 		"Constructor factory must be a free function or callable, not a member function pointer");
-	F func = entry.func;
-	return call_from_v8<Traits>(std::move(func), args, entry.defs);
+	F& func = entry.func;
+	return call_from_v8<Traits, true>(std::move(func), args, entry.defs);
 }
 
 /// Get the function type from an overload_entry
@@ -263,15 +279,17 @@ void forward_overloaded_function(v8::FunctionCallbackInfo<v8::Value> const& args
 {
 	v8::Isolate* isolate = args.GetIsolate();
 	v8::HandleScope scope(isolate);
+	v8::TryCatch try_catch(isolate);
+	try
+	{
+		auto& set = external_data::get<OverloadSet>(args.Data());
+		size_t const arg_count = args.Length();
 
-	auto& set = external_data::get<OverloadSet>(args.Data());
-	size_t const arg_count = args.Length();
+		bool matched = false;
+		std::string errors;
 
-	bool matched = false;
-	std::string errors;
-
-	std::apply([&](auto const&... entries)
-		{
+		std::apply([&](auto&... entries)
+			{
 		// Fold: short-circuit on first match via (matched || try_one())
 		((matched || [&]
 		{
@@ -285,7 +303,7 @@ void forward_overloaded_function(v8::FunctionCallbackInfo<v8::Value> const& args
 				return false;
 
 			// Type check
-			if (arg_count > 0 && !overload_types_match<F, Traits>(isolate, args, arg_count))
+			if (arg_count > 0 && !overload_types_match<F, Traits, overload_arg_range<Entry>::num_defaults>(isolate, args, arg_count))
 				return false;
 
 			// Try invoking
@@ -294,23 +312,30 @@ void forward_overloaded_function(v8::FunctionCallbackInfo<v8::Value> const& args
 				matched = try_invoke_entry<Traits>(entries, args);
 				return matched;
 			}
-			catch (std::exception const& ex)
+			catch (argument_conversion_error const& ex)
 			{
+				if (try_catch.HasCaught()) throw;
 				if (!errors.empty()) errors += "; ";
 				errors += ex.what();
 				return false;
 			}
 		}()), ...); }, set.entries);
 
-	if (!matched)
-	{
-		std::string msg = "No matching overload for " + std::to_string(arg_count) + " argument(s)";
-		if (!errors.empty())
+		if (!matched)
 		{
-			msg += ". Tried: " + errors;
+			std::string msg = "No matching overload for " + std::to_string(arg_count) + " argument(s)";
+			if (!errors.empty())
+			{
+				msg += ". Tried: " + errors;
+			}
+			throw std::runtime_error(msg);
 		}
-		args.GetReturnValue().Set(throw_ex(isolate, msg));
 	}
+	catch (std::exception const& ex)
+	{
+		if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
+	}
+	if (try_catch.HasCaught()) try_catch.ReThrow();
 }
 
 /// Helper: wrap a plain callable into overload_entry<F, void>

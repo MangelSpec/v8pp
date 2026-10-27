@@ -57,9 +57,9 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 				return;
 			}
 			object_registry* this_ = external_data::get<object_registry*>(args.Data());
+			v8::TryCatch try_catch(isolate);
 			try
 			{
-				v8::TryCatch try_catch(isolate);
 				auto wrapped = this_->wrap_object(args);
 				if (try_catch.HasCaught())
 				{
@@ -76,7 +76,8 @@ V8PP_IMPL object_registry<Traits>::object_registry(v8::Isolate* isolate, type_in
 			}
 			catch (std::exception const& ex)
 			{
-				args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+				if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
+				try_catch.ReThrow();
 			} }, external_data::set(isolate, this));
 
 	func_.Reset(isolate, func);
@@ -316,8 +317,7 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 		object_id id = obj->GetAlignedPointerFromInternalField(0);
 		if (id)
 		{
-			auto registry = static_cast<object_registry*>(
-				obj->GetAlignedPointerFromInternalField(1));
+			auto registry = static_cast<object_registry*>(obj->GetAlignedPointerFromInternalField(1));
 			if (registry && registry->is_valid())
 			{
 				pointer_type ptr = registry->find_object(id, type);
@@ -348,8 +348,7 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 			object_id id = obj->GetAlignedPointerFromInternalField(0);
 			if (id)
 			{
-				auto registry = static_cast<object_registry*>(
-					obj->GetAlignedPointerFromInternalField(1));
+				auto registry = static_cast<object_registry*>(obj->GetAlignedPointerFromInternalField(1));
 				if (registry && registry->is_valid())
 				{
 					pointer_type ptr = registry->find_object(id, type);

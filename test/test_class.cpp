@@ -781,8 +781,89 @@ void test_failed_ctor_factory()
 		run_script<int>(context, "new Item(42).value"), 42);
 }
 
+template<typename Traits>
+void test_dispatch_regressions()
+{
+	struct Item
+	{
+		int value;
+		explicit Item(int value) : value(value) {}
+	};
+	v8pp::context context;
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	using Pointer = typename Traits::template object_pointer_type<Item>;
+	v8pp::class_<Item, Traits> binding(isolate);
+	binding.ctor([count = 0](int) mutable -> Pointer
+			   { return Traits::template create<Item>(++count); }, v8pp::defaults(0))
+		.var("value", &Item::value);
+	context.class_("DispatchItem", binding);
+	check_eq("typed factory retains mutable state", run_script<int>(context, "new DispatchItem(); new DispatchItem().value"), 2);
+
+	binding.ctor(v8pp::with_defaults([count = 0](int value) mutable -> Pointer
+					 { return Traits::template create<Item>(value + ++count); }, v8pp::defaults(10)),
+		[](int, int) -> Pointer
+		{ return Traits::template create<Item>(-1); });
+	check_eq("constructor overload uses explicit undefined default", run_script<int>(context, "new DispatchItem(undefined).value"), 11);
+	check_eq("constructor overload retains mutable state", run_script<int>(context, "new DispatchItem().value"), 12);
+
+	int fallback_calls = 0;
+	binding.ctor([](int) -> Pointer
+		{ throw std::runtime_error("selected constructor failure"); },
+		[&fallback_calls](double) -> Pointer
+		{ ++fallback_calls; return Traits::template create<Item>(-1); });
+	check_eq("selected constructor failure propagates", run_script<std::string>(context, "try { new DispatchItem(1); 'missing'; } catch (e) { e.message; }"), "selected constructor failure");
+	check_eq("constructor body failure prevents fallback", fallback_calls, 0);
+
+	binding.ctor([](std::string) -> Pointer
+		{ return Traits::template create<Item>(1); }, v8pp::defaults());
+	check("typed constructor preserves original conversion exception", run_script<bool>(context, R"(
+		(() => { const original = {}; try { new DispatchItem({ toString() { throw original; } }); }
+		catch (e) { return e === original; } return false; })()
+	)"));
+	binding.ctor([](std::string) -> Pointer
+		{ return Traits::template create<Item>(1); },
+		[&fallback_calls](v8::Local<v8::Value>) -> Pointer
+		{ ++fallback_calls; return Traits::template create<Item>(2); });
+	check("overloaded constructor preserves original conversion exception", run_script<bool>(context, R"(
+		(() => { const original = {}; try { new DispatchItem({ toString() { throw original; } }); }
+		catch (e) { return e === original; } return false; })()
+	)"));
+	check_eq("constructor conversion exception prevents fallback", fallback_calls, 0);
+}
+
+void test_static_isolate_property()
+{
+	struct Item
+	{ std::string text; };
+	v8pp::context context;
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	int value = 0;
+	v8pp::class_<Item> binding(isolate);
+	binding.ctor<>().property("value", [&value](v8::Isolate*)
+						{ return value; }, [&value](v8::Isolate*, int next)
+						{ value = next; })
+		.var("text", &Item::text)
+		.property("converted", []()
+			{ return std::string{}; }, [](std::string) {});
+	context.class_("StaticPropertyItem", binding);
+	check_eq("static isolate-aware property setter converts its value", run_script<int>(context, "var staticPropertyItem = new StaticPropertyItem(); staticPropertyItem.value = 42; staticPropertyItem.value"), 42);
+	check("class member setter preserves original conversion exception", run_script<bool>(context, R"(
+		(() => { const original = {}; try { staticPropertyItem.text = { toString() { throw original; } }; }
+		catch (e) { return e === original; } return false; })()
+	)"));
+	check("class property setter preserves original conversion exception", run_script<bool>(context, R"(
+		(() => { const original = {}; try { staticPropertyItem.converted = { toString() { throw original; } }; }
+		catch (e) { return e === original; } return false; })()
+	)"));
+}
+
 void test_class()
 {
+	test_dispatch_regressions<v8pp::raw_ptr_traits>();
+	test_dispatch_regressions<v8pp::shared_ptr_traits>();
+	test_static_isolate_property();
 	test_class_<v8pp::raw_ptr_traits>();
 	test_class_<v8pp::shared_ptr_traits>();
 
