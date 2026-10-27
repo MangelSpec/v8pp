@@ -32,6 +32,7 @@
     <ClCompile Include="class.cpp" />
     <ClCompile Include="context.cpp" />
     <ClCompile Include="convert.cpp" />
+    <ClCompile Include="function.cpp" />
     <ClCompile Include="json.cpp" />
     <ClCompile Include="throw_ex.cpp" />
     <ClCompile Include="version.cpp" />
@@ -56,6 +57,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="class.ipp" />
+    <None Include="function.ipp" />
     <None Include="json.ipp" />
     <None Include="packages.config" />
     <None Include="throw_ex.ipp" />

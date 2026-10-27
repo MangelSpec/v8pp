@@ -21,6 +21,8 @@ namespace v8pp {
 ///
 /// The store creates and owns a lightweight V8 context internally.
 /// All stored values live in a dedicated storage object (not the global).
+/// It also retains the isolate's bindings until the last context/store owner
+/// is destroyed. Host persistent handles to native values must be reset first.
 ///
 /// Thread safety: same as V8 — single-threaded per isolate.
 ///
@@ -123,6 +125,8 @@ public:
 	bool get_json(std::string_view name, v8::Local<v8::Value>& out) const;
 
 private:
+	void destroy();
+
 	v8::Isolate* isolate_;
 	v8::Global<v8::Context> store_ctx_;
 	v8::Global<v8::Object> store_obj_;

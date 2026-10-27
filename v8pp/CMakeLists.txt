@@ -83,6 +83,7 @@ if(V8PP_HEADER_ONLY)
 	list(APPEND V8PP_HEADERS
 		class.ipp
 		context_store.ipp
+		function.ipp
 		json.ipp
 		string_utils.ipp
 		throw_ex.ipp
@@ -95,6 +96,7 @@ else()
 		context.cpp
 		context_store.cpp
 		convert.cpp
+		function.cpp
 		string_utils.cpp
 		json.cpp
 		throw_ex.cpp

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstring> // for memcpy
+#include <cstdint>
 
 #include <type_traits>
 
@@ -57,74 +58,50 @@ public:
 		}
 	}
 
-#if V8_MAJOR_VERSION > 10 || (V8_MAJOR_VERSION == 10 && V8_MINOR_VERSION >= 5)
-	static void destroy_all(v8::Isolate*)
-	{
-		// deprecated `Isolate::VisitHandlesWithClassIds()` has been removed
-	}
-#else
-	static void destroy_all(v8::Isolate* isolate)
-	{
-		struct handle_visitor final : v8::PersistentHandleVisitor
-		{
-			v8::Isolate* isolate;
-
-			explicit handle_visitor(v8::Isolate* isolate)
-				: isolate(isolate)
-			{
-			}
-
-			virtual void VisitPersistentHandle(v8::Persistent<v8::Value>* value, uint16_t value_class_id) override
-			{
-				if (value_class_id == external_data::class_id)
-				{
-					v8::HandleScope scope(isolate);
-					v8::Local<v8::External> ext = value->Get(isolate).As<v8::External>();
-					if (!ext.IsEmpty())
-					{
-						delete static_cast<value_holder_base*>(ext->Value());
-					}
-				}
-			}
-		};
-
-		handle_visitor visitor(isolate);
-		isolate->VisitHandlesWithClassIds(&visitor);
-	}
-#endif
+	static void destroy_all(v8::Isolate* isolate);
+	static void add_owner(v8::Isolate* isolate);
+	static bool remove_owner(v8::Isolate* isolate);
+	static void retain_resource(v8::Isolate* isolate, std::shared_ptr<void> resource);
 
 private:
-	static constexpr uint16_t class_id = 0x7bc;
-
 	struct value_holder_base
 	{
 		virtual ~value_holder_base() = default;
 	};
+	struct registry;
+	static registry& instance();
+	static uintptr_t register_holder(v8::Isolate* isolate, value_holder_base* holder);
+	static void unregister_holder(v8::Isolate* isolate, uintptr_t token);
+	static value_holder_base* find_holder(v8::Isolate* isolate, uintptr_t token);
 
 	template<typename T>
 	struct value_holder final : value_holder_base
 	{
-		std::aligned_storage_t<sizeof(T), alignof(T)> storage;
+		v8::Isolate* isolate_;
+		uintptr_t token_ = 0;
+		T value_;
 		v8::Global<v8::External> pext;
 
-		T& data() { return *static_cast<T*>(static_cast<void*>(&storage)); }
+		T& data() { return value_; }
 
 		value_holder(v8::Isolate* isolate, T&& data)
+			: isolate_(isolate)
+			, value_(std::forward<T>(data))
 		{
-			new (&storage) T(std::forward<T>(data));
 			pext.Reset(isolate, v8::External::New(isolate, this));
-			pext.SetWrapperClassId(external_data::class_id);
-			pext.SetWeak(this, [](v8::WeakCallbackInfo<value_holder> const& info)
-				{ delete info.GetParameter(); }, v8::WeakCallbackType::kParameter);
+			token_ = register_holder(isolate_, this);
+			pext.SetWeak(reinterpret_cast<value_holder*>(token_), [](v8::WeakCallbackInfo<value_holder> const& info)
+				{
+					auto* holder = static_cast<value_holder*>(find_holder(info.GetIsolate(), reinterpret_cast<uintptr_t>(info.GetParameter())));
+					if (holder) holder->pext.Reset();
+					info.SetSecondPassCallback([](v8::WeakCallbackInfo<value_holder> const& second)
+						{ delete find_holder(second.GetIsolate(), reinterpret_cast<uintptr_t>(second.GetParameter())); }); }, v8::WeakCallbackType::kParameter);
 		}
 
 		~value_holder()
 		{
-			if (!pext.IsEmpty())
-			{
-				data().~T();
-				pext.Reset();
-			}
+			pext.Reset();
+			unregister_holder(isolate_, token_);
 		}
 	};
 };
@@ -385,3 +362,7 @@ v8::Local<v8::Function> wrap_function(v8::Isolate* isolate, std::string_view nam
 }
 
 } // namespace v8pp
+
+#if V8PP_HEADER_ONLY
+#include "v8pp/function.ipp"
+#endif

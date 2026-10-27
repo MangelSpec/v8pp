@@ -1,6 +1,7 @@
 #include "v8pp/context.hpp"
 #include "v8pp/object.hpp"
 #include "v8pp/module.hpp"
+#include "v8pp/class.hpp"
 
 #include "test.hpp"
 
@@ -93,6 +94,56 @@ void test_context()
 		int const r = context.run_script("'4' + 2")->Int32Value(context.isolate()->GetCurrentContext()).FromJust();
 
 		check_eq("run_script with externally set up context", r, 42);
+	}
+
+	{
+		v8pp::context original;
+		v8pp::context moved(std::move(original));
+		v8::HandleScope scope(moved.isolate());
+		check("require after move uses the live context", run_script<bool>(moved, "try { require('v8pp-missing-move-module'); false; } catch(e) { e.message.includes('could not load shared library'); }"));
+		check("run after move uses the live context", run_script<bool>(moved, "try { run('v8pp-missing-move-file.js'); false; } catch(e) { e.message.includes('could not locate file'); }"));
+	}
+
+	{
+		v8pp::context original;
+		v8pp::context moved(original.isolate(), nullptr, false, false);
+		moved = std::move(original);
+		v8::HandleScope scope(moved.isolate());
+		check("require after move assignment", run_script<bool>(moved, "try { require('v8pp-missing-move-module'); false; } catch(e) { e.message.includes('could not load shared library'); }"));
+		check("run after move assignment", run_script<bool>(moved, "try { run('v8pp-missing-move-file.js'); false; } catch(e) { e.message.includes('could not locate file'); }"));
+	}
+
+	{
+		struct Item
+		{ int value = 42; };
+		auto allocator = std::unique_ptr<v8::ArrayBuffer::Allocator>(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
+		v8::Isolate* isolate = v8pp::context::create_isolate(allocator.get());
+		{
+			v8::Isolate::Scope isolate_scope(isolate);
+			v8::HandleScope scope(isolate);
+			{
+				v8pp::context first(isolate, nullptr, false, false);
+				v8::Context::Scope context_scope(first.impl());
+				v8pp::class_<Item> binding(isolate);
+				binding.ctor<>().var("value", &Item::value);
+				first.class_("Item", binding);
+				{
+					v8pp::context second(isolate, nullptr, false, false);
+				}
+				check_eq("destroying borrowed context preserves another context's bindings",
+					run_script<int>(first, "new Item().value"), 42);
+			}
+			{
+				v8pp::context replacement(isolate, nullptr, false, false);
+				v8::Context::Scope context_scope(replacement.impl());
+				v8pp::class_<Item> binding(isolate);
+				binding.ctor<>().var("value", &Item::value);
+				replacement.class_("Item", binding);
+				check_eq("last borrowed context releases bindings for rebinding",
+					run_script<int>(replacement, "new Item().value"), 42);
+			}
+		}
+		isolate->Dispose();
 	}
 
 	{

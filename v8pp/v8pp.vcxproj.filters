@@ -6,6 +6,7 @@
     <ClCompile Include="class.cpp" />
     <ClCompile Include="throw_ex.cpp" />
     <ClCompile Include="convert.cpp" />
+    <ClCompile Include="function.cpp" />
     <ClCompile Include="version.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -21,6 +22,7 @@
     <ClInclude Include="convert.hpp" />
     <ClInclude Include="property.hpp" />
     <ClInclude Include="function.hpp" />
+    <ClInclude Include="function.ipp" />
     <ClInclude Include="object.hpp" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="ptr_traits.hpp" />

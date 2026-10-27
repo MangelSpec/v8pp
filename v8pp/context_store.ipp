@@ -1,4 +1,5 @@
 #include "v8pp/context_store.hpp"
+#include "v8pp/class.hpp"
 #include "v8pp/json.hpp"
 
 namespace v8pp {
@@ -13,10 +14,24 @@ V8PP_IMPL context_store::context_store(v8::Isolate* isolate)
 	v8::Context::Scope context_scope(ctx);
 	v8::Local<v8::Object> obj = v8::Object::New(isolate_);
 	store_obj_.Reset(isolate_, obj);
+	detail::external_data::add_owner(isolate_);
 }
 
 V8PP_IMPL context_store::~context_store()
 {
+	destroy();
+}
+
+V8PP_IMPL void context_store::destroy()
+{
+	if (!isolate_) return;
+	if (detail::external_data::remove_owner(isolate_))
+	{
+		v8::Isolate::Scope isolate_scope(isolate_);
+		v8::HandleScope scope(isolate_);
+		v8::Context::Scope context_scope(impl());
+		cleanup(isolate_);
+	}
 	store_obj_.Reset();
 	store_ctx_.Reset();
 	isolate_ = nullptr;
@@ -33,8 +48,7 @@ V8PP_IMPL context_store& context_store::operator=(context_store&& src) noexcept
 {
 	if (this != &src)
 	{
-		store_obj_.Reset();
-		store_ctx_.Reset();
+		destroy();
 		isolate_ = std::exchange(src.isolate_, nullptr);
 		store_ctx_ = std::move(src.store_ctx_);
 		store_obj_ = std::move(src.store_obj_);

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <map>
+#include <cstdint>
 
 #include <v8.h>
 
@@ -35,6 +36,10 @@ public:
 	/// and v8::ArrayBuffer::Allocator,
 	/// and add default global methods (`require()`, `run()`)
 	/// and enter the created v8 context
+	/// Bindings are shared by contexts and context stores on an isolate and are
+	/// cleaned up when the last such owner is destroyed.
+	/// Release host persistent handles to native callbacks and wrapped objects
+	/// before destroying that last owner.
 	explicit context(v8::Isolate* isolate = nullptr,
 		v8::ArrayBuffer::Allocator* allocator = nullptr,
 		bool add_default_global_methods = true,
@@ -132,6 +137,7 @@ private:
 	v8::Isolate* isolate_;
 	v8::Global<v8::Context> impl_;
 	std::unique_ptr<v8::ArrayBuffer::Allocator> array_buffer_allocator_;
+	uint64_t callback_id_ = 0;
 
 	static void load_module(v8::FunctionCallbackInfo<v8::Value> const& args);
 	static void run_file(v8::FunctionCallbackInfo<v8::Value> const& args);

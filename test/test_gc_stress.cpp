@@ -213,6 +213,50 @@ void test_gc_stress_inheritance()
 
 void test_gc_stress()
 {
+	{
+		std::weak_ptr<int> captured;
+		{
+			v8pp::context context;
+			v8::HandleScope scope(context.isolate());
+			auto value = std::make_shared<int>(42);
+			captured = value;
+			context.function("captured", [value]
+				{ return *value; });
+			value.reset();
+			check_eq("captured callback works before teardown", run_script<int>(context, "captured()"), 42);
+		}
+		check("context teardown releases native callback captures without GC", captured.expired());
+	}
+
+	{
+		struct Left
+		{ int value = 11; };
+		struct Right
+		{
+			int value = 22;
+			int get() const { return value; }
+		};
+		struct Both : Left
+			, Right
+		{
+		};
+		auto check_const_property = []<typename Traits>()
+		{
+			v8pp::context context;
+			auto* isolate = context.isolate();
+			v8::HandleScope scope(isolate);
+			v8pp::class_<Right, Traits> base(isolate);
+			base.const_property("constant", &Right::get);
+			v8pp::class_<Both, Traits> derived(isolate);
+			derived.template inherit<Right>().template ctor<>();
+			context.class_("Both", derived);
+			check_eq("inherited constant property adjusts the base pointer",
+				run_script<int>(context, "new Both().constant"), 22);
+		};
+		check_const_property.template operator()<v8pp::raw_ptr_traits>();
+		check_const_property.template operator()<v8pp::shared_ptr_traits>();
+	}
+
 	test_gc_stress_bulk<v8pp::raw_ptr_traits>();
 	test_gc_stress_bulk<v8pp::shared_ptr_traits>();
 

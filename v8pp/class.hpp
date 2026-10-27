@@ -100,7 +100,7 @@ public:
 		// Set constant properties
 		for (const auto& base : bases_)
 		{
-			base.info.apply_const_properties(isolate, obj, ext);
+			base.info.apply_const_properties(isolate, obj, base.cast(ext));
 		}
 
 		for (const auto& [name, func] : const_properties)
@@ -218,92 +218,96 @@ struct iterator_factory
 	{
 		begin_result current;
 		end_result end;
-		v8::Global<v8::Object> container_ref; // prevent GC of container during iteration
 	};
 
 	static void iterator_callback(v8::FunctionCallbackInfo<v8::Value> const& args)
 	{
 		v8::Isolate* isolate = args.GetIsolate();
 		v8::HandleScope scope(isolate);
+		v8::TryCatch try_catch(isolate);
 
 		try
 		{
 			auto self = class_<T, Traits>::unwrap_object(isolate, args.This());
 			if (!self)
 			{
-				args.GetReturnValue().Set(
-					throw_ex(isolate, "calling [Symbol.iterator] on null instance"));
-				return;
+				throw std::runtime_error("calling [Symbol.iterator] on null instance");
 			}
 
 			decltype(auto) factory = external_data::get<iterator_factory>(args.Data());
 
-			auto* iter_state = new state{
+			auto iter_state = std::make_unique<state>(state{
 				std::invoke(factory.begin_fn, std::as_const(*self)),
-				std::invoke(factory.end_fn, std::as_const(*self)),
-				v8::Global<v8::Object>(isolate, args.This().As<v8::Object>())
-			};
+				std::invoke(factory.end_fn, std::as_const(*self)) });
 
 			v8::Local<v8::Context> context = isolate->GetCurrentContext();
 			v8::Local<v8::Object> iter_obj = v8::Object::New(isolate);
 
-			v8::Local<v8::External> state_ext = v8::External::New(isolate, iter_state);
+			v8::Local<v8::Value> state_ext = external_data::set(isolate, std::move(iter_state));
 			v8::Local<v8::Function> next_fn;
 			if (!v8::Function::New(context, &next_callback, state_ext).ToLocal(&next_fn))
 			{
-				delete iter_state;
-				args.GetReturnValue().Set(throw_ex(isolate, "failed to create iterator next()"));
-				return;
+				throw std::runtime_error("failed to create iterator next()");
 			}
 
-			iter_obj->Set(context, v8pp::to_v8_name(isolate, "next"), next_fn).FromJust();
-
-			// weak ref to clean up state when iterator object is GC'd
-			auto* weak_data = new weak_ref_data{ iter_state, v8::Global<v8::Object>(isolate, iter_obj) };
-			weak_data->handle.SetWeak(weak_data, weak_callback, v8::WeakCallbackType::kParameter);
+			// Traced edges keep extracted next() calls alive and allow iterator cycles to be collected.
+			if (!next_fn->SetPrivate(context,
+							v8::Private::ForApi(isolate, v8pp::to_v8_name(isolate, "v8pp.iterator.container")), args.This())
+					.FromMaybe(false) ||
+				!iter_obj->CreateDataProperty(context, v8pp::to_v8_name(isolate, "next"), next_fn).FromMaybe(false))
+			{
+				throw std::runtime_error("failed to initialize iterator");
+			}
 
 			args.GetReturnValue().Set(iter_obj);
 		}
 		catch (std::exception const& ex)
 		{
-			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 
 	static void next_callback(v8::FunctionCallbackInfo<v8::Value> const& args)
 	{
 		v8::Isolate* isolate = args.GetIsolate();
 		v8::HandleScope scope(isolate);
+		v8::TryCatch try_catch(isolate);
 
 		try
 		{
-			auto* iter_state = static_cast<state*>(
-				args.Data().As<v8::External>()->Value());
+			auto const& iter_state = external_data::get<std::unique_ptr<state>>(args.Data());
 
 			v8::Local<v8::Context> context = isolate->GetCurrentContext();
 			v8::Local<v8::Object> result = v8::Object::New(isolate);
 
 			if (iter_state->current == iter_state->end)
 			{
-				result->Set(context,
-						  v8pp::to_v8_name(isolate, "value"),
-						  v8::Undefined(isolate))
-					.FromJust();
-				result->Set(context,
-						  v8pp::to_v8_name(isolate, "done"),
-						  v8::Boolean::New(isolate, true))
-					.FromJust();
+				if (!result->CreateDataProperty(context,
+							   v8pp::to_v8_name(isolate, "value"),
+							   v8::Undefined(isolate))
+						.FromMaybe(false) ||
+					!result->CreateDataProperty(context,
+							   v8pp::to_v8_name(isolate, "done"),
+							   v8::Boolean::New(isolate, true))
+						.FromMaybe(false))
+				{
+					throw std::runtime_error("failed to create iterator result");
+				}
 			}
 			else
 			{
-				result->Set(context,
-						  v8pp::to_v8_name(isolate, "value"),
-						  v8pp::to_v8(isolate, *iter_state->current))
-					.FromJust();
-				result->Set(context,
-						  v8pp::to_v8_name(isolate, "done"),
-						  v8::Boolean::New(isolate, false))
-					.FromJust();
+				if (!result->CreateDataProperty(context,
+							   v8pp::to_v8_name(isolate, "value"),
+							   v8pp::to_v8(isolate, *iter_state->current))
+						.FromMaybe(false) ||
+					!result->CreateDataProperty(context,
+							   v8pp::to_v8_name(isolate, "done"),
+							   v8::Boolean::New(isolate, false))
+						.FromMaybe(false))
+				{
+					throw std::runtime_error("failed to create iterator result");
+				}
 				++iter_state->current;
 			}
 
@@ -311,22 +315,9 @@ struct iterator_factory
 		}
 		catch (std::exception const& ex)
 		{
-			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
-	}
-
-	struct weak_ref_data
-	{
-		state* iter_state;
-		v8::Global<v8::Object> handle;
-	};
-
-	static void weak_callback(v8::WeakCallbackInfo<weak_ref_data> const& info)
-	{
-		auto* ref = info.GetParameter();
-		delete ref->iter_state;
-		ref->handle.Reset();
-		delete ref;
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 };
 

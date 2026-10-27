@@ -1,5 +1,6 @@
 #include "v8pp/context_store.hpp"
 #include "v8pp/json.hpp"
+#include "v8pp/class.hpp"
 
 #include "test.hpp"
 
@@ -13,6 +14,47 @@ static_assert(!std::is_copy_constructible_v<v8pp::context_store>);
 
 void test_context_store()
 {
+	{
+		struct Stored
+		{
+			int value = 73;
+			int get() const { return value; }
+		};
+		auto allocator = std::unique_ptr<v8::ArrayBuffer::Allocator>(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
+		v8::Isolate* isolate = v8pp::context::create_isolate(allocator.get());
+		std::weak_ptr<int> captured;
+		{
+			v8::Isolate::Scope isolate_scope(isolate);
+			v8::HandleScope scope(isolate);
+			{
+				v8pp::context_store store(isolate);
+				{
+					v8pp::context source(isolate, nullptr, false, false);
+					v8::Context::Scope context_scope(source.impl());
+					v8pp::class_<Stored> binding(isolate);
+					binding.ctor<>().function("get", &Stored::get);
+					source.class_("Stored", binding);
+					auto capture = std::make_shared<int>(29);
+					captured = capture;
+					source.function("savedFunction", [capture]
+						{ return *capture; });
+					source.run_script("globalThis.savedObject = new Stored();");
+					check_eq("save wrapped values", store.save_from(source.impl(), { "savedObject", "savedFunction" }), size_t(2));
+				}
+				{
+					v8pp::context target(isolate, nullptr, false, false);
+					v8::Context::Scope context_scope(target.impl());
+					check_eq("restore wrapped values", store.restore_to(target.impl(), { "savedObject", "savedFunction" }), size_t(2));
+					check_eq("stored wrapped object survives its context", run_script<int>(target, "savedObject.get()"), 73);
+					check_eq("stored native callback survives its context", run_script<int>(target, "savedFunction()"), 29);
+				}
+				check("store retains callback captures between contexts", !captured.expired());
+			}
+			check("last store releases callback captures", captured.expired());
+		}
+		isolate->Dispose();
+	}
+
 	// Test 1: basic set/get with V8 value
 	{
 		v8pp::context context;

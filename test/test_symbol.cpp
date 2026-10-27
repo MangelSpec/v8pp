@@ -41,10 +41,60 @@ struct WordList
 	auto end() const { return words.end(); }
 };
 
+struct TrackedList
+{
+	static int instances;
+	std::vector<int> numbers{ 11, 22 };
+	TrackedList() { ++instances; }
+	~TrackedList() { --instances; }
+	auto begin() const { return numbers.begin(); }
+	auto end() const { return numbers.end(); }
+};
+
+int TrackedList::instances = 0;
+
+template<typename Traits>
+void test_iterator_lifetime()
+{
+	v8pp::context context;
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	v8pp::class_<TrackedList, Traits> binding(isolate);
+	binding.template ctor<>().iterable(&TrackedList::begin, &TrackedList::end);
+	context.class_("TrackedList", binding);
+	{
+		v8::HandleScope inner_scope(isolate);
+		context.run_script("globalThis.savedNext = new TrackedList()[Symbol.iterator]().next;");
+	}
+	auto collect = [isolate]
+	{
+		isolate->RequestGarbageCollectionForTesting(v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
+		isolate->RequestGarbageCollectionForTesting(v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
+	};
+	collect();
+	check_eq("extracted next keeps its native container alive", TrackedList::instances, 1);
+	check_eq("extracted next survives iterator collection", run_script<int>(context, "savedNext().value"), 11);
+	{
+		v8::HandleScope inner_scope(isolate);
+		context.run_script("savedNext = null;");
+	}
+	collect();
+	check_eq("discarded next releases its native container", TrackedList::instances, 0);
+	{
+		v8::HandleScope inner_scope(isolate);
+		context.run_script("(() => { let list = new TrackedList(); list.iterator = list[Symbol.iterator](); })();");
+	}
+	collect();
+	check_eq("unreachable container-iterator cycle is collectable", TrackedList::instances, 0);
+}
+
 } // namespace
 
 void test_symbol()
 {
+	test_iterator_lifetime<v8pp::raw_ptr_traits>();
+	test_iterator_lifetime<v8pp::shared_ptr_traits>();
+
 	// Test to_string_tag
 	{
 		v8pp::context context;

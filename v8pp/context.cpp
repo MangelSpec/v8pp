@@ -8,10 +8,11 @@
 
 #include <fstream>
 #include <mutex>
-#include <unordered_set>
+#include <atomic>
+#include <unordered_map>
 #include <utility>
 
-#if defined(WIN32)
+#if defined(_WIN32)
 #define VC_EXTRALEAN
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -23,21 +24,21 @@ static char const path_sep = '/';
 
 namespace v8pp {
 
-static std::mutex& alive_contexts_mutex()
+static std::mutex& callback_contexts_mutex()
 {
 	static std::mutex mtx;
 	return mtx;
 }
 
-static std::unordered_set<context*>& alive_contexts()
+static std::unordered_map<uint64_t, context*>& callback_contexts()
 {
-	static std::unordered_set<context*> set;
-	return set;
+	static std::unordered_map<uint64_t, context*> contexts;
+	return contexts;
 }
 
 struct context::dynamic_module
 {
-	void* handle;
+	std::shared_ptr<void> handle;
 	v8::Global<v8::Value> exports;
 };
 
@@ -47,6 +48,7 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 
 	v8::EscapableHandleScope scope(isolate);
 	v8::Local<v8::Value> result;
+	v8::TryCatch try_catch(isolate);
 	try
 	{
 		std::string const name = from_v8<std::string>(isolate, args[0], "");
@@ -55,13 +57,15 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 			throw std::runtime_error("load_module: require module name string argument");
 		}
 
-		context* ctx = detail::external_data::get<context*>(args.Data());
+		context* ctx;
 		{
-			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
-			if (alive_contexts().find(ctx) == alive_contexts().end())
+			std::lock_guard lock(callback_contexts_mutex());
+			auto it = callback_contexts().find(args.Data().As<v8::BigInt>()->Uint64Value());
+			if (it == callback_contexts().end())
 			{
 				throw std::runtime_error("require() called on destroyed context");
 			}
+			ctx = it->second;
 		}
 
 		// check if module is already loaded
@@ -86,10 +90,12 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 			dynamic_module module;
 #if defined(WIN32)
 			UINT const prev_error_mode = SetErrorMode(SEM_NOOPENFILEERRORBOX);
-			module.handle = LoadLibraryA(filename.c_str());
+			module.handle = std::shared_ptr<void>(LoadLibraryA(filename.c_str()), [](void* handle)
+				{ if (handle) ::FreeLibrary(static_cast<HMODULE>(handle)); });
 			::SetErrorMode(prev_error_mode);
 #else
-			module.handle = dlopen(filename.c_str(), RTLD_LAZY);
+			module.handle = std::shared_ptr<void>(dlopen(filename.c_str(), RTLD_LAZY), [](void* handle)
+				{ if (handle) dlclose(handle); });
 #endif
 
 			if (!module.handle)
@@ -97,10 +103,10 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 				throw std::runtime_error("load_module(" + name + "): could not load shared library " + filename);
 			}
 #if defined(WIN32)
-			void* sym = ::GetProcAddress((HMODULE)module.handle,
+			void* sym = ::GetProcAddress(static_cast<HMODULE>(module.handle.get()),
 				V8PP_STRINGIZE(V8PP_PLUGIN_INIT_PROC_NAME));
 #else
-			void* sym = dlsym(module.handle, V8PP_STRINGIZE(V8PP_PLUGIN_INIT_PROC_NAME));
+			void* sym = dlsym(module.handle.get(), V8PP_STRINGIZE(V8PP_PLUGIN_INIT_PROC_NAME));
 #endif
 			if (!sym)
 			{
@@ -109,16 +115,21 @@ void context::load_module(v8::FunctionCallbackInfo<v8::Value> const& args)
 
 			using module_init_proc = v8::Local<v8::Value> (*)(v8::Isolate*);
 			module_init_proc init_proc = reinterpret_cast<module_init_proc>(sym);
+			detail::external_data::retain_resource(isolate, module.handle);
 			result = init_proc(isolate);
+			if (result.IsEmpty()) throw std::runtime_error("load_module(" + name + "): initialization failed");
 			module.exports.Reset(isolate, result);
 			ctx->modules_.emplace(name, std::move(module));
 		}
 	}
 	catch (std::exception const& ex)
 	{
-		result = throw_ex(isolate, ex.what());
+		if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 	}
-	args.GetReturnValue().Set(scope.Escape(result));
+	if (try_catch.HasCaught())
+		try_catch.ReThrow();
+	else
+		args.GetReturnValue().Set(scope.Escape(result));
 }
 
 void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
@@ -127,6 +138,7 @@ void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
 
 	v8::EscapableHandleScope scope(isolate);
 	v8::Local<v8::Value> result;
+	v8::TryCatch try_catch(isolate);
 	try
 	{
 		std::string const filename = from_v8<std::string>(isolate, args[0], "");
@@ -135,21 +147,26 @@ void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
 			throw std::runtime_error("run_file: require filename string argument");
 		}
 
-		context* ctx = detail::external_data::get<context*>(args.Data());
+		context* ctx;
 		{
-			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
-			if (alive_contexts().find(ctx) == alive_contexts().end())
+			std::lock_guard lock(callback_contexts_mutex());
+			auto it = callback_contexts().find(args.Data().As<v8::BigInt>()->Uint64Value());
+			if (it == callback_contexts().end())
 			{
 				throw std::runtime_error("run() called on destroyed context");
 			}
+			ctx = it->second;
 		}
 		result = to_v8(isolate, ctx->run_file(filename));
 	}
 	catch (std::exception const& ex)
 	{
-		result = throw_ex(isolate, ex.what());
+		if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 	}
-	args.GetReturnValue().Set(scope.Escape(result));
+	if (try_catch.HasCaught())
+		try_catch.ReThrow();
+	else
+		args.GetReturnValue().Set(scope.Escape(result));
 }
 
 v8::Isolate* context::create_isolate(v8::ArrayBuffer::Allocator* allocator)
@@ -186,7 +203,9 @@ context::context(v8::Isolate* isolate, v8::ArrayBuffer::Allocator* allocator,
 
 	if (add_default_global_methods)
 	{
-		v8::Local<v8::Value> data = detail::external_data::set(isolate_, this);
+		static std::atomic<uint64_t> next_callback_id{ 1 };
+		callback_id_ = next_callback_id.fetch_add(1, std::memory_order_relaxed);
+		v8::Local<v8::Value> data = v8::BigInt::NewFromUnsigned(isolate_, callback_id_);
 		global->Set(isolate_, "require",
 			v8::FunctionTemplate::New(isolate_, context::load_module, data));
 		global->Set(isolate_, "run",
@@ -199,10 +218,12 @@ context::context(v8::Isolate* isolate, v8::ArrayBuffer::Allocator* allocator,
 		impl->Enter();
 	}
 	impl_.Reset(isolate_, impl);
+	detail::external_data::add_owner(isolate_);
 
+	if (callback_id_)
 	{
-		std::lock_guard<std::mutex> lock(alive_contexts_mutex());
-		alive_contexts().insert(this);
+		std::lock_guard lock(callback_contexts_mutex());
+		callback_contexts().emplace(callback_id_, this);
 	}
 }
 
@@ -212,12 +233,15 @@ context::context(context&& src) noexcept
 	, isolate_(std::exchange(src.isolate_, nullptr))
 	, impl_(std::move(src.impl_))
 	, array_buffer_allocator_(std::move(src.array_buffer_allocator_))
+	, callback_id_(std::exchange(src.callback_id_, 0))
 	, modules_(std::move(src.modules_))
 	, lib_path_(std::move(src.lib_path_))
 {
-	std::lock_guard<std::mutex> lock(alive_contexts_mutex());
-	alive_contexts().erase(&src);
-	alive_contexts().insert(this);
+	if (callback_id_)
+	{
+		std::lock_guard lock(callback_contexts_mutex());
+		callback_contexts().at(callback_id_) = this;
+	}
 }
 
 context& context::operator=(context&& src) noexcept
@@ -230,13 +254,14 @@ context& context::operator=(context&& src) noexcept
 		enter_context_ = std::exchange(src.enter_context_, false);
 		isolate_ = std::exchange(src.isolate_, nullptr);
 		array_buffer_allocator_ = std::move(src.array_buffer_allocator_);
+		callback_id_ = std::exchange(src.callback_id_, 0);
 		impl_ = std::move(src.impl_);
 		modules_ = std::move(src.modules_);
 		lib_path_ = std::move(src.lib_path_);
+		if (callback_id_)
 		{
-			std::lock_guard<std::mutex> lock(alive_contexts_mutex());
-			alive_contexts().erase(&src);
-			alive_contexts().insert(this);
+			std::lock_guard lock(callback_contexts_mutex());
+			callback_contexts().at(callback_id_) = this;
 		}
 	}
 	return *this;
@@ -255,26 +280,23 @@ void context::destroy()
 		return;
 	}
 
+	if (callback_id_)
 	{
-		std::lock_guard<std::mutex> lock(alive_contexts_mutex());
-		alive_contexts().erase(this);
+		std::lock_guard lock(callback_contexts_mutex());
+		callback_contexts().erase(callback_id_);
+		callback_id_ = 0;
 	}
 
-	// remove all class singletons and external data before modules unload
-	cleanup(isolate_);
+	bool const last_owner = detail::external_data::remove_owner(isolate_);
+	if (own_isolate_ || last_owner)
+	{
+		cleanup(isolate_);
+	}
 
 	for (auto& kv : modules_)
 	{
 		dynamic_module& module = kv.second;
 		module.exports.Reset();
-		if (module.handle)
-		{
-#if defined(WIN32)
-			::FreeLibrary((HMODULE)module.handle);
-#else
-			dlclose(module.handle);
-#endif
-		}
 	}
 	modules_.clear();
 
