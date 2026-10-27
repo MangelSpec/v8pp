@@ -25,7 +25,7 @@ void set2(v8::Isolate*, int)
 void get3(v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const&)
 {
 }
-void set3(v8::Local<v8::String>, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const&)
+void set3(v8::Local<v8::String>, v8::Local<v8::Value>, v8pp::detail::setter_callback_info const&)
 {
 }
 
@@ -38,7 +38,7 @@ struct X
 	void set2(v8::Isolate*, int) {}
 
 	void get3(v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const&) {}
-	void set3(v8::Local<v8::String>, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const&) {}
+	void set3(v8::Local<v8::String>, v8::Local<v8::Value>, v8pp::detail::setter_callback_info const&) {}
 };
 
 // external accessors
@@ -62,7 +62,7 @@ void external_set2(X&, v8::Isolate*, int)
 void external_get3(const volatile X&, v8::Local<v8::String>, v8::PropertyCallbackInfo<v8::Value> const&)
 {
 }
-void external_set3(volatile X&, v8::Local<v8::String>, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const&)
+void external_set3(volatile X&, v8::Local<v8::String>, v8::Local<v8::Value>, v8pp::detail::setter_callback_info const&)
 {
 }
 

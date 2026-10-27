@@ -22,7 +22,7 @@ template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>
 inline constexpr bool is_setter = CallTraits::arg_count == 1 + Offset;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_direct_setter = CallTraits::arg_count == 3 + Offset && std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>> && std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>> && std::same_as<typename CallTraits::template arg_type<2 + Offset>, setter_callback_info const&> && std::same_as<typename function_traits<F>::return_type, void>;
+inline constexpr bool is_direct_setter = CallTraits::arg_count == 3 + Offset && std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>> && std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>> && (std::same_as<typename CallTraits::template arg_type<2 + Offset>, setter_callback_info const&> || std::same_as<typename CallTraits::template arg_type<2 + Offset>, v8::PropertyCallbackInfo<void> const&>) && std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_isolate_setter = CallTraits::arg_count == 2 + Offset && is_first_arg_isolate<F, Offset>;
@@ -71,6 +71,8 @@ void property_set(Set& setter, v8::Local<v8::Name> name, v8::Local<v8::Value> va
 	if constexpr (is_direct_setter<Set, offset>)
 	{
 		(void)isolate;
+		static_assert(std::is_invocable_v<Set&, ObjArg&..., v8::Local<v8::Name>, v8::Local<v8::Value>, setter_callback_info const&>,
+			"Direct setters must use the PropertyCallbackInfo type required by this V8 version (Boolean on V8 15+, void on older versions).");
 		std::invoke(setter, obj..., name, value, info);
 	}
 	else if constexpr (is_isolate_setter<Set, offset>)
