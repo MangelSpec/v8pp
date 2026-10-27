@@ -78,7 +78,7 @@ struct shared_ptr_traits
 	static object_id pointer_id(pointer_type const& ptr) { return ptr.get(); }
 	static pointer_type key(object_id id)
 	{
-		return std::shared_ptr<void>(id, [](void*) {});
+		return pointer_type(pointer_type{}, id);
 	}
 	static pointer_type const_pointer_cast(const_pointer_type const& ptr) { return std::const_pointer_cast<void>(ptr); }
 	template<typename T, typename U>

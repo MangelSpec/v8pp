@@ -933,14 +933,13 @@ struct convert<Sequence, void>
 		}
 
 		v8::EscapableHandleScope scope(isolate);
-		v8::Local<v8::Context> context = isolate->GetCurrentContext();
-		v8::Local<v8::Array> result = v8::Array::New(isolate, static_cast<int>(value.size()));
-		uint32_t i = 0;
+		std::vector<v8::Local<v8::Value>> elements;
+		elements.reserve(value.size());
 		for (item_type const& item : value)
 		{
-			detail::checked_property(result->CreateDataProperty(context, i++, convert<item_type>::to_v8(isolate, item)));
+			elements.emplace_back(convert<item_type>::to_v8(isolate, item));
 		}
-		return scope.Escape(result);
+		return scope.Escape(v8::Array::New(isolate, elements.data(), static_cast<int>(elements.size())));
 	}
 };
 
