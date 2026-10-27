@@ -3,6 +3,7 @@
 #include <type_traits>
 
 #include <v8.h>
+#include "v8pp/v8_compat.hpp"
 
 // V8 10+ supports Fast API callbacks, but some distributions (e.g. Ubuntu libv8-dev)
 // ship V8 10+ without the v8-fast-api-calls.h header. Guard on both version and header.
@@ -87,7 +88,7 @@ struct fast_callback<MemPtr>
 	static R call(v8::Local<v8::Object> receiver, Args... args,
 		v8::FastApiCallbackOptions& options)
 	{
-		void* ptr = receiver->GetAlignedPointerFromInternalField(0);
+		void* ptr = detail::aligned_pointer(receiver, 0);
 		if (!ptr)
 		{
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
@@ -111,7 +112,7 @@ struct fast_callback<MemPtr>
 	static R call(v8::Local<v8::Object> receiver, Args... args,
 		v8::FastApiCallbackOptions& options)
 	{
-		void* ptr = receiver->GetAlignedPointerFromInternalField(0);
+		void* ptr = detail::aligned_pointer(receiver, 0);
 		if (!ptr)
 		{
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)

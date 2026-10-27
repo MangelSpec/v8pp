@@ -704,7 +704,9 @@ public:
 		class_info_.js_function_template()
 			->PrototypeTemplate()
 			->SetAccessor(v8_name, getter, setter, data,
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 1)
 				v8::DEFAULT,
+#endif
 				v8::PropertyAttribute(v8::DontDelete),
 				v8::SideEffectType::kHasNoSideEffect,
 				v8::SideEffectType::kHasSideEffectToReceiver);
@@ -783,7 +785,9 @@ public:
 		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
 		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data,
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 1)
 			v8::DEFAULT,
+#endif
 			v8::PropertyAttribute(v8::DontDelete),
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
 #endif
@@ -1148,7 +1152,7 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
-			auto self = unwrap_object(isolate, info.This());
+			auto self = unwrap_object(isolate, detail::property_receiver(info));
 			if (!self)
 			{
 				throw std::runtime_error("accessing member on non-existent C++ object");
@@ -1172,7 +1176,7 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
-			auto self = unwrap_object(isolate, info.This());
+			auto self = unwrap_object(isolate, detail::property_receiver(info));
 			if (!self)
 			{
 				throw std::runtime_error("setting member on non-existent C++ object");

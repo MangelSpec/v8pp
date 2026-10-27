@@ -22,7 +22,7 @@ template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>
 inline constexpr bool is_setter = CallTraits::arg_count == 1 + Offset;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
-inline constexpr bool is_direct_setter = CallTraits::arg_count == 3 + Offset && std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>> && std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>> && std::same_as<typename CallTraits::template arg_type<2 + Offset>, v8::PropertyCallbackInfo<void> const&> && std::same_as<typename function_traits<F>::return_type, void>;
+inline constexpr bool is_direct_setter = CallTraits::arg_count == 3 + Offset && std::is_convertible_v<typename CallTraits::template arg_type<0 + Offset>, v8::Local<v8::Name>> && std::same_as<typename CallTraits::template arg_type<1 + Offset>, v8::Local<v8::Value>> && std::same_as<typename CallTraits::template arg_type<2 + Offset>, setter_callback_info const&> && std::same_as<typename function_traits<F>::return_type, void>;
 
 template<typename F, size_t Offset, typename CallTraits = call_from_v8_traits<F>>
 inline constexpr bool is_isolate_setter = CallTraits::arg_count == 2 + Offset && is_first_arg_isolate<F, Offset>;
@@ -62,7 +62,7 @@ void property_get(Get& getter, v8::Local<v8::Name> name,
 
 template<typename Set, typename... ObjArg>
 void property_set(Set& setter, v8::Local<v8::Name> name, v8::Local<v8::Value> value,
-	v8::PropertyCallbackInfo<void> const& info, ObjArg&... obj)
+	setter_callback_info const& info, ObjArg&... obj)
 {
 	constexpr size_t offset = sizeof...(ObjArg) == 0 || std::is_member_function_pointer_v<Set> ? 0 : 1;
 
@@ -110,7 +110,7 @@ void property_get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> 
 		}
 		else
 		{
-			auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(isolate, info.This());
+			auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(isolate, property_receiver(info));
 			if (!obj) throw std::runtime_error("accessing property on non-existent C++ object");
 			property_get(property.getter, name, info, *obj);
 		}
@@ -123,7 +123,7 @@ void property_get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> 
 }
 
 template<typename Property, typename Traits, typename Set, typename SetClass>
-void property_set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
+void property_set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, setter_callback_info const& info)
 {
 	v8::Isolate* isolate = info.GetIsolate();
 	v8::TryCatch try_catch(isolate);
@@ -136,10 +136,17 @@ void property_set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, v8::Prop
 		}
 		else
 		{
-			auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(isolate, info.This());
+			auto obj = v8pp::class_<SetClass, Traits>::unwrap_object(isolate, property_receiver(info));
 			if (!obj) throw std::runtime_error("setting property on non-existent C++ object");
 			property_set(property.setter, name, value, info, *obj);
 		}
+#if V8_MAJOR_VERSION >= 15
+		constexpr size_t offset = std::same_as<SetClass, none> ? 0 : (std::is_member_function_pointer_v<Set> ? 0 : 1);
+		if constexpr (!is_direct_setter<Set, offset>)
+		{
+			if (!try_catch.HasCaught()) info.GetReturnValue().Set(true);
+		}
+#endif
 	}
 	catch (std::exception const& ex)
 	{
@@ -175,7 +182,7 @@ struct property final
 	}
 
 	template<typename Traits>
-	static void set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
+	static void set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, detail::setter_callback_info const& info)
 	{
 		detail::property_set<property, Traits, Set, SetClass>(name, value, info);
 	}
@@ -202,7 +209,7 @@ struct property<Get, detail::none, GetClass, detail::none> final
 	}
 
 	template<typename Traits>
-	static void set(v8::Local<v8::Name> name, v8::Local<v8::Value>, v8::PropertyCallbackInfo<void> const& info)
+	static void set(v8::Local<v8::Name> name, v8::Local<v8::Value>, detail::setter_callback_info const& info)
 	{
 		// assert(false && "read-only property");
 		if (info.ShouldThrowOnError())

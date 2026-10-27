@@ -10,6 +10,7 @@
 #include "v8pp/ptr_traits.hpp"
 #include "v8pp/throw_ex.hpp"
 #include "v8pp/utility.hpp"
+#include "v8pp/v8_compat.hpp"
 
 namespace v8pp::detail {
 
@@ -30,7 +31,7 @@ public:
 		{
 			void* ptr = nullptr;
 			memcpy(&ptr, &value, sizeof value);
-			return v8::External::New(isolate, ptr);
+			return new_external(isolate, ptr);
 		}
 		else
 		{
@@ -45,7 +46,7 @@ public:
 	{
 		if constexpr (is_bitcast_allowed<T>)
 		{
-			void* ptr = value.As<v8::External>()->Value();
+			void* ptr = external_value(value.As<v8::External>());
 			T data;
 			memcpy(&data, &ptr, sizeof data);
 			return data;
@@ -53,7 +54,7 @@ public:
 		else
 		{
 			using ExtValue = value_holder<T>;
-			ExtValue* ext_value = static_cast<ExtValue*>(value.As<v8::External>()->Value());
+			ExtValue* ext_value = static_cast<ExtValue*>(external_value(value.As<v8::External>()));
 			return (ext_value->data()); // as reference
 		}
 	}
@@ -88,7 +89,7 @@ private:
 			: isolate_(isolate)
 			, value_(std::forward<T>(data))
 		{
-			pext.Reset(isolate, v8::External::New(isolate, this));
+			pext.Reset(isolate, new_external(isolate, this));
 			token_ = register_holder(isolate_, this);
 			pext.SetWeak(reinterpret_cast<value_holder*>(token_), [](v8::WeakCallbackInfo<value_holder> const& info)
 				{

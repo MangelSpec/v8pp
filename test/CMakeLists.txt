@@ -37,6 +37,10 @@ endif()
 
 target_link_libraries(v8pp_test PRIVATE v8pp ${CMAKE_DL_LIBS})
 
+if(MSVC)
+	target_compile_options(v8pp_test PRIVATE /EHsc)
+endif()
+
 add_test(NAME v8pp_test COMMAND v8pp_test --version --run-tests)
 
 if(BUILD_SHARED_LIBS)

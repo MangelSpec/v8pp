@@ -218,8 +218,8 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 
 	v8::EscapableHandleScope scope(isolate_);
 	assert(obj->InternalFieldCount() == 2);
-	obj->SetAlignedPointerInInternalField(0, Traits::pointer_id(object));
-	obj->SetAlignedPointerInInternalField(1, this);
+	set_aligned_pointer(obj, 0, Traits::pointer_id(object));
+	set_aligned_pointer(obj, 1, this);
 
 	v8::Global<v8::Object> pobj(isolate_, obj);
 	pobj.SetWeak(this, [](v8::WeakCallbackInfo<object_registry> const& data)
@@ -262,8 +262,8 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 	v8::Local<v8::Object> obj;
 	if (class_function_template()->GetFunction(context).ToLocal(&func) && func->NewInstance(context).ToLocal(&obj))
 	{
-		obj->SetAlignedPointerInInternalField(0, Traits::pointer_id(object));
-		obj->SetAlignedPointerInInternalField(1, this);
+		set_aligned_pointer(obj, 0, Traits::pointer_id(object));
+		set_aligned_pointer(obj, 1, this);
 
 		v8::Global<v8::Object> pobj(isolate_, obj);
 		pobj.SetWeak(this, [](v8::WeakCallbackInfo<object_registry> const& data)
@@ -314,10 +314,10 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 	// Fast path: check the object itself (most common case)
 	if (obj->InternalFieldCount() == 2)
 	{
-		object_id id = obj->GetAlignedPointerFromInternalField(0);
+		object_id id = aligned_pointer(obj, 0);
 		if (id)
 		{
-			auto registry = static_cast<object_registry*>(obj->GetAlignedPointerFromInternalField(1));
+			auto registry = static_cast<object_registry*>(aligned_pointer(obj, 1));
 			if (registry && registry->is_valid())
 			{
 				pointer_type ptr = registry->find_object(id, type);
@@ -333,7 +333,9 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 	constexpr int kMaxPrototypeDepth = 16;
 	for (int depth = 0; depth < kMaxPrototypeDepth; ++depth)
 	{
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+#if V8_MAJOR_VERSION > 14 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 7)
+		value = obj->GetPrototype();
+#elif V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 		value = obj->GetPrototypeV2();
 #else
 		value = obj->GetPrototype();
@@ -345,10 +347,10 @@ object_registry<Traits>::unwrap_object(v8::Local<v8::Value> value)
 		obj = value.As<v8::Object>();
 		if (obj->InternalFieldCount() == 2)
 		{
-			object_id id = obj->GetAlignedPointerFromInternalField(0);
+			object_id id = aligned_pointer(obj, 0);
 			if (id)
 			{
-				auto registry = static_cast<object_registry*>(obj->GetAlignedPointerFromInternalField(1));
+				auto registry = static_cast<object_registry*>(aligned_pointer(obj, 1));
 				if (registry && registry->is_valid())
 				{
 					pointer_type ptr = registry->find_object(id, type);

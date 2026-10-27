@@ -134,7 +134,7 @@ static int extern_fun(v8::FunctionCallbackInfo<v8::Value> const& args)
 template<typename Traits>
 void get_rprop_direct(v8::Local<v8::Name>, v8::PropertyCallbackInfo<v8::Value> const& info)
 {
-	auto self = v8pp::class_<X, Traits>::unwrap_object(info.GetIsolate(), info.This());
+	auto self = v8pp::class_<X, Traits>::unwrap_object(info.GetIsolate(), v8pp::detail::property_receiver(info));
 	info.GetReturnValue().Set(v8pp::to_v8(info.GetIsolate(), self->var));
 }
 

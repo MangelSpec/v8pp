@@ -76,6 +76,7 @@ set(V8PP_HEADERS
 	throw_ex.hpp
 	type_info.hpp
 	utility.hpp
+	v8_compat.hpp
 	version.hpp
 )
 
@@ -146,6 +147,11 @@ else()
 	if(BUILD_SHARED_LIBS)
 		target_link_libraries(v8pp PUBLIC ${CMAKE_DL_LIBS})
 	endif()
+endif()
+
+# V8 headers check __cplusplus, which MSVC reports accurately only with this flag.
+if(MSVC)
+	target_compile_options(v8pp INTERFACE /Zc:__cplusplus)
 endif()
 
 # Install (skipped when consumed as a subdirectory of another package)

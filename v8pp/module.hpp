@@ -110,9 +110,9 @@ public:
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
 		v8::AccessorNameGetterCallback getter = &var_get<Variable>;
-		v8::AccessorNameSetterCallback setter = &var_set<Variable>;
+		detail::accessor_setter_callback setter = &var_set<Variable>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate_, &var);
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 1)
 		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
 			v8::PropertyAttribute::DontDelete,
 			v8::SideEffectType::kHasNoSideEffect,
@@ -144,11 +144,11 @@ public:
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
 		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
-		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
+		detail::accessor_setter_callback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
 		v8::Local<v8::Value> data = detail::external_data::set(isolate_, property_type(std::move(get), std::move(set)));
 
 		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 1)
 		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
 			v8::PropertyAttribute::DontDelete,
 			v8::SideEffectType::kHasNoSideEffect, setter_effect);
@@ -272,7 +272,7 @@ private:
 	}
 
 	template<typename Variable>
-	static void var_set(v8::Local<v8::Name>, v8::Local<v8::Value> value, v8::PropertyCallbackInfo<void> const& info)
+	static void var_set(v8::Local<v8::Name>, v8::Local<v8::Value> value, detail::setter_callback_info const& info)
 	{
 		v8::Isolate* isolate = info.GetIsolate();
 
@@ -281,6 +281,9 @@ private:
 		{
 			Variable* var = detail::external_data::get<Variable*>(info.Data());
 			*var = v8pp::from_v8<Variable>(isolate, value);
+#if V8_MAJOR_VERSION >= 15
+			info.GetReturnValue().Set(true);
+#endif
 		}
 		catch (std::exception const& ex)
 		{
