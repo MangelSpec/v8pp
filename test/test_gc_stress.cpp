@@ -230,7 +230,9 @@ void test_gc_stress()
 
 	{
 		struct Left
-		{ int value = 11; };
+		{
+			int value = 11;
+		};
 		struct Right
 		{
 			int value = 22;

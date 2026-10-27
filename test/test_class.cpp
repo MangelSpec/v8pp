@@ -734,7 +734,8 @@ void test_failed_ctor_factory()
 	struct Item
 	{
 		int value;
-		explicit Item(int value) : value(value) {}
+		explicit Item(int value)
+			: value(value) {}
 	};
 
 	v8pp::context context;
@@ -790,7 +791,8 @@ void test_dispatch_regressions()
 	struct Item
 	{
 		int value;
-		explicit Item(int value) : value(value) {}
+		explicit Item(int value)
+			: value(value) {}
 	};
 	v8pp::context context;
 	auto* isolate = context.isolate();
@@ -838,7 +840,9 @@ void test_dispatch_regressions()
 void test_static_isolate_property()
 {
 	struct Item
-	{ std::string text; };
+	{
+		std::string text;
+	};
 	v8pp::context context;
 	auto* isolate = context.isolate();
 	v8::HandleScope scope(isolate);

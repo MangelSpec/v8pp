@@ -115,7 +115,9 @@ void test_context()
 
 	{
 		struct Item
-		{ int value = 42; };
+		{
+			int value = 42;
+		};
 		auto allocator = std::unique_ptr<v8::ArrayBuffer::Allocator>(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
 		v8::Isolate* isolate = v8pp::context::create_isolate(allocator.get());
 		{
