@@ -89,7 +89,7 @@ static_assert(std::same_as<arg_convert<decltype(t), 4, shared_ptr_traits>, v8pp:
 
 void test_call_from_v8()
 {
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 

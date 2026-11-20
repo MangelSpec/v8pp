@@ -28,6 +28,7 @@ option(BUILD_SHARED_LIBS "Build shared library" ON)
 option(BUILD_TESTING "Build and run tests" OFF)
 option(BUILD_DOCUMENTATION "Build documentation" OFF)
 option(BUILD_BENCHMARKS "Build benchmarks" OFF)
+option(V8PP_ENABLE_DISPATCH_DIAGNOSTICS "Count native binding dispatch operations" OFF)
 
 # Custom project options
 option(V8PP_HEADER_ONLY "Header-only library" OFF)
@@ -35,6 +36,8 @@ set(V8PP_ISOLATE_DATA_SLOT 0 CACHE STRING "v8::Isolate data slot number, used in
 set(V8PP_PLUGIN_INIT_PROC_NAME "v8pp_module_init" CACHE STRING "v8pp plugin initialization procedure name")
 set(V8PP_PLUGIN_SUFFIX ${CMAKE_SHARED_MODULE_SUFFIX} CACHE STRING "v8pp plugin filename suffix")
 option(V8PP_PRETTIFY_TYPENAMES "v8pp registered classes will have prettier typeid names" ON)
+option(V8PP_ENABLE_MANAGED_WRAPPERS "Enable opt-in managed wrappers with the pinned Windows x64 V8 monolith" OFF)
+set(V8PP_MANAGED_WRAPPERS_DATA_SLOT 1 CACHE STRING "Isolate data slot reserved by v8pp managed isolates")
 option(V8_COMPRESS_POINTERS "Use new V8 ABI with V8_COMPRESS_POINTERS and V8_31BIT_SMIS_ON_64BIT_ARCH" ON)
 option(V8_ENABLE_SANDBOX "Enable sandboxing in V8" OFF)
 

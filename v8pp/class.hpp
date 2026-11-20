@@ -1,13 +1,18 @@
 #pragma once
 
 #include <algorithm>
+#include <exception>
 #include <memory>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "v8pp/config.hpp"
 #include "v8pp/function.hpp"
+#include "v8pp/managed_wrappers.hpp"
+#include "v8pp/native_dispatch.hpp"
 #include "v8pp/overload.hpp"
 #include "v8pp/property.hpp"
 #include "v8pp/ptr_traits.hpp"
@@ -18,26 +23,59 @@
 #endif
 #include "v8pp/object.hpp"
 
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+#include <cppgc/cross-thread-persistent.h>
+#include <cppgc/garbage-collected.h>
+#endif
+
 namespace v8pp::detail {
 
-struct class_info
-{
-	static constexpr uint32_t kMagic = 0xC1A5517F;
+class classes;
 
-	uint32_t const magic = kMagic;
+struct class_info : std::enable_shared_from_this<class_info>
+{
 	type_info const type;
 	type_info const traits;
+	bool retired = false;
+	external_data::group callbacks;
 
 	class_info(type_info const& type, type_info const& traits);
-
-	virtual ~class_info()
-	{
-		const_cast<uint32_t&>(magic) = 0;
-	}
-
-	bool is_valid() const { return magic == kMagic; }
+	virtual ~class_info() = default;
+	virtual void retire() = 0;
 
 	std::string class_name() const;
+	static std::string class_name(type_info const& type, type_info const& traits);
+};
+
+struct wrapper_registration
+{
+	using owner_type = std::variant<void*, std::shared_ptr<void>>;
+	class_info* registry = nullptr;
+	owner_type owner;
+};
+
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+struct managed_wrapper_registration final : cppgc::GarbageCollected<managed_wrapper_registration>
+{
+	wrapper_registration registration;
+
+	void Trace(cppgc::Visitor*) const {}
+};
+#endif
+
+struct weak_wrapper
+{
+	explicit weak_wrapper(classes& state);
+	virtual ~weak_wrapper() = default;
+	virtual void collect() = 0;
+	void make_weak(v8::Global<v8::Object>& handle);
+	void reset_weak_handle();
+
+	classes& state;
+	v8::Global<v8::Object>* weak_handle = nullptr;
+	weak_wrapper** previous = nullptr;
+	weak_wrapper* next = nullptr;
+	bool detached = false;
 };
 
 template<typename Traits>
@@ -52,15 +90,16 @@ public:
 	using dtor_function = std::function<void(v8::Isolate*, pointer_type const&)>;
 	using cast_function = pointer_type (*)(pointer_type const&);
 
-	object_registry(v8::Isolate* isolate, type_info const& type, dtor_function&& dtor);
+	object_registry(classes& state, v8::Isolate* isolate, type_info const& type, dtor_function&& dtor);
 
 	object_registry(object_registry const&) = delete;
-	object_registry(object_registry&&) = default;
+	object_registry(object_registry&&) = delete;
 
 	object_registry& operator=(object_registry const&) = delete;
 	object_registry& operator=(object_registry&&) = delete;
 
-	~object_registry();
+	~object_registry() override;
+	void retire() override;
 
 	v8::Isolate* isolate() { return isolate_; }
 
@@ -77,7 +116,7 @@ public:
 	void set_auto_wrap_objects(bool auto_wrap) { auto_wrap_objects_ = auto_wrap; }
 	bool auto_wrap_objects() const { return auto_wrap_objects_; }
 
-	void set_ctor(ctor_function&& ctor) { ctor_ = std::move(ctor); }
+	void set_ctor(ctor_function&& ctor) { ctor_ = std::make_shared<ctor_function>(std::move(ctor)); }
 
 	void add_base(object_registry& info, cast_function cast);
 	bool cast(pointer_type& ptr, type_info const& actual_type) const;
@@ -85,55 +124,106 @@ public:
 	void remove_object(object_id const& obj);
 	void remove_objects();
 
-	pointer_type find_object(object_id id, type_info const& actual_type) const;
 	v8::Local<v8::Object> find_v8_object(pointer_type const& ptr) const;
+	v8::Local<v8::Object> find_v8_object_by_id(object_id const& id) const;
 
 	v8::Local<v8::Object> wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, size_t size);
 	v8::Local<v8::Object> wrap_object(pointer_type const& object, size_t size);
 	v8::Local<v8::Object> wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args);
-	pointer_type unwrap_object(v8::Local<v8::Value> value);
+
+	template<typename Create>
+	v8::Local<v8::Object> create_wrapped_object(Create&& create)
+	{
+		native_dispatch_scope dispatch(isolate_);
+		auto self = shared_from_this();
+		factory_call factory(*this);
+		auto object = std::invoke(std::forward<Create>(create));
+		if (!object) return {};
+		auto const size = Traits::object_size(object);
+		try
+		{
+			auto wrapped = wrap_object(object, size);
+			if (!wrapped.IsEmpty()) return wrapped;
+		}
+		catch (...)
+		{
+			rollback_factory_result(object, size);
+			throw;
+		}
+		rollback_factory_result(object, size);
+		return {};
+	}
+
+	pointer_type unwrap_object(v8::Local<v8::Value> value, v8::Local<v8::Object>* registered_wrapper = nullptr);
 
 	std::unordered_map<std::string, std::function<v8::Local<v8::Value>(v8::Isolate*, pointer_type)>> const_properties;
 
-	void apply_const_properties(v8::Isolate* isolate, v8::Local<v8::Object> obj, pointer_type const& ext)
-	{
-		// Set constant properties
-		for (const auto& base : bases_)
-		{
-			base.info.apply_const_properties(isolate, obj, base.cast(ext));
-		}
-
-		for (const auto& [name, func] : const_properties)
-		{
-			v8pp::set_const(isolate, obj, name, func(isolate, ext));
-		}
-	}
-
 private:
-	struct wrapped_object
+	struct wrapped_object final : weak_wrapper
 	{
-		v8::Global<v8::Object> pobj;
+		wrapped_object(object_registry& registry, object_id id, size_t size);
+		void collect() override;
+
+		object_registry& registry;
+		object_id id;
 		size_t size; // 0 for referenced objects
+		wrapper_registration* registration = nullptr;
+		std::unique_ptr<wrapper_registration> portable_registration;
+		v8::Global<v8::Object> portable_cell;
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+		// Isolates can transfer their Locker to another thread between
+		// publication and collection. Keep the cell alive for the second pass.
+		cppgc::subtle::CrossThreadPersistent<managed_wrapper_registration> managed_registration;
+#endif
 	};
 
-	void reset_object(pointer_type const& object, wrapped_object& wrapped);
+	void detach_object(object_id id);
+	void reset_object(std::unique_ptr<wrapped_object> wrapped);
+	bool apply_const_properties(v8::Local<v8::Object> obj, pointer_type const& ext);
+	bool owns_new_factory_result(object_id id) const;
+	void rollback_factory_result(pointer_type const& object, size_t size);
+
+	struct factory_call
+	{
+		explicit factory_call(object_registry& registry);
+		~factory_call();
+
+		object_registry& registry;
+		factory_call* const previous;
+		std::vector<object_id> retired_objects;
+	};
 
 	struct base_class_info
 	{
-		object_registry& info;
+		object_registry* info;
 		cast_function cast;
 
 		base_class_info(object_registry& info, cast_function cast)
-			: info(info)
+			: info(&info)
 			, cast(cast)
 		{
 		}
 	};
 
+	struct object_entry
+	{
+		explicit object_entry(std::unique_ptr<wrapped_object> value)
+			: receipt(std::move(value))
+		{
+		}
+
+		object_entry(object_entry&&) = delete;
+		object_entry& operator=(object_entry&&) = delete;
+
+		v8::Global<v8::Object> wrapper;
+		std::unique_ptr<wrapped_object> receipt;
+	};
+
 	std::vector<base_class_info> bases_;
 	std::vector<object_registry*> derivatives_;
-	std::unordered_map<pointer_type, wrapped_object> objects_;
+	std::unordered_map<object_id, object_entry> objects_;
 
+	classes& state_;
 	v8::Isolate* isolate_;
 	v8::Global<v8::FunctionTemplate> func_;
 	v8::Global<v8::FunctionTemplate> js_func_;
@@ -161,12 +251,14 @@ private:
 	}
 #endif
 
-	ctor_function ctor_;
-	dtor_function dtor_;
-	bool auto_wrap_objects_;
+	std::shared_ptr<ctor_function> ctor_;
+	std::shared_ptr<dtor_function> dtor_;
+	factory_call* factory_call_ = nullptr;
+	bool auto_wrap_objects_ = false;
+	bool const managed_wrappers_;
 };
 
-class classes
+class classes final : public registration_lifetime
 {
 public:
 	template<typename Traits>
@@ -182,16 +274,28 @@ public:
 	static void remove_all(v8::Isolate* isolate);
 
 private:
-	using classes_info = std::unordered_map<uintptr_t, std::unique_ptr<class_info>>;
+	friend void dispose_native_registrations(v8::Isolate*, std::exception_ptr*);
+	friend struct weak_wrapper;
+	template<typename> friend class object_registry;
+
+	using classes_info = std::unordered_map<uintptr_t, std::shared_ptr<class_info>>;
 	classes_info classes_;
+	v8::Global<v8::Private> portable_key_;
+	v8::Global<v8::ObjectTemplate> portable_template_;
+	weak_wrapper* pending_weak_ = nullptr;
 
 	enum class operation
 	{
 		get,
-		add,
-		remove
+		add
 	};
 	static classes* instance(operation op, v8::Isolate* isolate);
+	explicit classes(v8::Isolate* isolate) : isolate_(isolate) {}
+	v8::Local<v8::Private> portable_key();
+	v8::Local<v8::Object> create_portable_cell(v8::Local<v8::Context> context);
+	bool idle() const noexcept override { return classes_.empty() && !pending_weak_; }
+	void release_if_idle();
+	v8::Isolate* isolate_;
 };
 
 } // namespace v8pp::detail
@@ -228,31 +332,37 @@ struct iterator_factory
 
 		try
 		{
-			auto self = class_<T, Traits>::unwrap_object(isolate, args.This());
+			native_dispatch_scope dispatch(isolate);
+			external_data::pin callback(args.Data());
+			auto& registry = classes::find<Traits>(isolate, type_id<T>());
+			auto registry_pin = registry.shared_from_this();
+			v8::Local<v8::Object> container;
+			auto self = Traits::template static_pointer_cast<T>(registry.unwrap_object(args.This(), &container));
 			if (!self)
 			{
 				throw std::runtime_error("calling [Symbol.iterator] on null instance");
 			}
 
-			decltype(auto) factory = external_data::get<iterator_factory>(args.Data());
+			auto& factory = callback.get<iterator_factory>();
 
-			auto iter_state = std::make_unique<state>(state{
+			state iter_state{
 				std::invoke(factory.begin_fn, std::as_const(*self)),
-				std::invoke(factory.end_fn, std::as_const(*self)) });
+				std::invoke(factory.end_fn, std::as_const(*self)) };
+			if (!callback.live()) throw std::runtime_error("native iterator binding has been retired");
 
 			v8::Local<v8::Context> context = isolate->GetCurrentContext();
 			v8::Local<v8::Object> iter_obj = v8::Object::New(isolate);
 
-			v8::Local<v8::Value> state_ext = external_data::set(isolate, std::move(iter_state));
+			v8::Local<v8::Value> state_ext = external_data::set(isolate, std::move(iter_state), &registry.callbacks);
 			v8::Local<v8::Function> next_fn;
 			if (!v8::Function::New(context, &next_callback, state_ext).ToLocal(&next_fn))
 			{
 				throw std::runtime_error("failed to create iterator next()");
 			}
 
-			// Traced edges keep extracted next() calls alive and allow iterator cycles to be collected.
-			if (!next_fn->SetPrivate(context,
-							v8::Private::ForApi(isolate, v8pp::to_v8_name(isolate, "v8pp.iterator.container")), args.This())
+			// Retain the exact registration across later prototype changes on a delegate.
+			if (!state_ext.As<v8::Object>()->SetPrivate(context,
+							v8::Private::ForApi(isolate, v8pp::to_v8_name(isolate, "v8pp.iterator.container")), container)
 					.FromMaybe(false) ||
 				!iter_obj->CreateDataProperty(context, v8pp::to_v8_name(isolate, "next"), next_fn).FromMaybe(false))
 			{
@@ -276,9 +386,16 @@ struct iterator_factory
 
 		try
 		{
-			auto const& iter_state = external_data::get<std::unique_ptr<state>>(args.Data());
-
+			native_dispatch_scope dispatch(isolate);
+			external_data::pin callback(args.Data());
 			v8::Local<v8::Context> context = isolate->GetCurrentContext();
+			v8::Local<v8::Value> container;
+			if (!args.Data().As<v8::Object>()->GetPrivate(context,
+					v8::Private::ForApi(isolate, v8pp::to_v8_name(isolate, "v8pp.iterator.container"))).ToLocal(&container))
+				throw std::runtime_error("could not read native iterator container");
+			auto self = class_<T, Traits>::unwrap_object(isolate, container);
+			if (!self) throw std::runtime_error("native iterator container has been retired");
+			auto* iter_state = &callback.get<state>();
 			v8::Local<v8::Object> result = v8::Object::New(isolate);
 
 			if (iter_state->current == iter_state->end)
@@ -297,6 +414,7 @@ struct iterator_factory
 			}
 			else
 			{
+				external_data::result_scope conversion(callback);
 				if (!result->CreateDataProperty(context,
 							   v8pp::to_v8_name(isolate, "value"),
 							   v8pp::to_v8(isolate, *iter_state->current))
@@ -332,18 +450,19 @@ struct to_primitive_invoker
 	{
 		v8::Isolate* isolate = args.GetIsolate();
 		v8::HandleScope scope(isolate);
+		v8::TryCatch try_catch(isolate);
 
 		try
 		{
+			native_dispatch_scope dispatch(isolate);
+			external_data::pin callback_data(args.Data());
 			auto self = class_<T, Traits>::unwrap_object(isolate, args.This());
 			if (!self)
 			{
-				args.GetReturnValue().Set(
-					throw_ex(isolate, "calling [Symbol.toPrimitive] on null instance"));
-				return;
+				throw std::runtime_error("calling [Symbol.toPrimitive] on null instance");
 			}
 
-			decltype(auto) invoker = external_data::get<to_primitive_invoker>(args.Data());
+			auto& invoker = callback_data.get<to_primitive_invoker>();
 
 			std::string hint;
 			if (args.Length() > 0)
@@ -358,14 +477,19 @@ struct to_primitive_invoker
 			}
 			else
 			{
-				args.GetReturnValue().Set(
-					to_v8(isolate, std::invoke(invoker.func, std::as_const(*self), std::string_view(hint))));
+				decltype(auto) result = std::invoke(invoker.func, std::as_const(*self), std::string_view(hint));
+				if (!try_catch.HasCaught())
+				{
+					external_data::result_scope conversion(callback_data);
+					args.GetReturnValue().Set(to_v8(isolate, result));
+				}
 			}
 		}
 		catch (std::exception const& ex)
 		{
-			args.GetReturnValue().Set(throw_ex(isolate, ex.what()));
+			if (!try_catch.HasCaught()) throw_ex(isolate, ex.what());
 		}
+		if (try_catch.HasCaught()) try_catch.ReThrow();
 	}
 };
 
@@ -560,7 +684,6 @@ public:
 					if (try_catch.HasCaught())
 					{
 						try_catch.ReThrow();
-						return std::make_pair(pointer_type{}, size_t{});
 					}
 					return std::make_pair(pointer_type(result), Traits::object_size(result));
 				}
@@ -582,6 +705,7 @@ public:
 	class_& inherit()
 	{
 		static_assert(std::derived_from<T, U>, "Class U should be base for class T");
+		v8::HandleScope scope(isolate());
 		// TODO: std::is_convertible<T*, U*> and check for duplicates in hierarchy?
 		auto& base = detail::classes::find<Traits>(isolate(), detail::type_id<U>());
 		class_info_.add_base(base, [](pointer_type const& ptr)
@@ -636,7 +760,7 @@ public:
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
 		auto wrapped_fun = wrap_function_template<FuncPtr, Traits>(isolate(),
-			fast_function<FuncPtr>{}, side_effect);
+			fast_function<FuncPtr>{}, side_effect, &class_info_.callbacks);
 
 		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
 		js_func->PrototypeTemplate()->Set(v8_name, wrapped_fun, attr);
@@ -655,7 +779,7 @@ public:
 		v8::HandleScope scope(isolate());
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
-		v8::Local<v8::Data> wrapped_fun = wrap_overload_template<Traits>(isolate(),
+		v8::Local<v8::Data> wrapped_fun = detail::wrap_class_overload_template<Traits>(isolate(), &class_info_.callbacks,
 			std::forward<F1>(f1), std::forward<F2>(f2), std::forward<Fs>(fs)...);
 
 		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
@@ -667,7 +791,8 @@ public:
 
 	/// Set class member variable
 	template<typename Attribute>
-	class_& var(std::string_view name, Attribute attribute)
+	class_& var(std::string_view name, Attribute attribute,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		static_assert(std::is_member_object_pointer_v<Attribute>, "Attribute must be pointer to member data");
 
@@ -677,7 +802,7 @@ public:
 		attribute_type attr = attribute;
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
-		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr));
+		v8::Local<v8::Value> data = detail::external_data::set(isolate(), std::forward<attribute_type>(attr), &class_info_.callbacks);
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
 		// V8 12.9+ removed ObjectTemplate::SetAccessor (crbug.com/336325111).
 		// Use SetAccessorProperty on PrototypeTemplate with FunctionTemplate-based
@@ -689,12 +814,12 @@ public:
 			&member_get_fn<attribute_type>, data,
 			v8::Local<v8::Signature>(), 0,
 			v8::ConstructorBehavior::kThrow,
-			v8::SideEffectType::kHasNoSideEffect);
+			getter_effect);
 		auto setter_template = v8::FunctionTemplate::New(isolate(),
 			&member_set_fn<attribute_type>, data,
 			v8::Local<v8::Signature>(), 0,
 			v8::ConstructorBehavior::kThrow,
-			v8::SideEffectType::kHasSideEffectToReceiver);
+			v8::SideEffectType::kHasSideEffect);
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
 			v8_name, getter_template, setter_template,
 			v8::PropertyAttribute(v8::DontDelete));
@@ -708,16 +833,18 @@ public:
 				v8::DEFAULT,
 #endif
 				v8::PropertyAttribute(v8::DontDelete),
-				v8::SideEffectType::kHasNoSideEffect,
-				v8::SideEffectType::kHasSideEffectToReceiver);
+				getter_effect,
+				v8::SideEffectType::kHasSideEffect);
 #endif
 		return *this;
 	}
 
 	/// Set read/write class property with getter and setter
 	template<typename GetFunction, typename SetFunction = detail::none>
-	requires(!is_fast_function<std::decay_t<GetFunction>>::value)
-	class_& property(std::string_view name, GetFunction&& get, SetFunction&& set = {})
+	requires(!is_fast_function<std::decay_t<GetFunction>>::value &&
+		!std::same_as<std::decay_t<SetFunction>, v8::SideEffectType>)
+	class_& property(std::string_view name, GetFunction&& get, SetFunction&& set = {},
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		using Getter = typename std::conditional_t<std::is_member_function_pointer_v<GetFunction>,
 			typename detail::function_traits<GetFunction>::template pointer_type<T>,
@@ -753,13 +880,13 @@ public:
 				"(ObjectTemplate::SetAccessor was removed). Use a regular getter instead.");
 		}
 
-		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
+		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)), &class_info_.callbacks);
 
 		auto getter_template = v8::FunctionTemplate::New(isolate(),
 			&property_get_fn<property_type, GetClass>, data,
 			v8::Local<v8::Signature>(), 0,
 			v8::ConstructorBehavior::kThrow,
-			v8::SideEffectType::kHasNoSideEffect);
+			getter_effect);
 
 		v8::Local<v8::FunctionTemplate> setter_template;
 		if constexpr (!property_type::is_readonly)
@@ -773,7 +900,7 @@ public:
 				&property_set_fn<property_type, Setter, SetClass>, data,
 				v8::Local<v8::Signature>(), 0,
 				v8::ConstructorBehavior::kThrow,
-				v8::SideEffectType::kHasSideEffectToReceiver);
+				v8::SideEffectType::kHasSideEffect);
 		}
 
 		v8::PropertyAttribute attrs = property_type::is_readonly ? v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete) : v8::PropertyAttribute(v8::DontDelete);
@@ -782,28 +909,34 @@ public:
 #else
 		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
 		v8::AccessorNameSetterCallback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
-		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)));
-		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
+		v8::Local<v8::Value> data = detail::external_data::set(isolate(), property_type(std::move(get), std::move(set)), &class_info_.callbacks);
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessor(v8_name, getter, setter, data,
 #if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 1)
 			v8::DEFAULT,
 #endif
 			v8::PropertyAttribute(v8::DontDelete),
-			v8::SideEffectType::kHasNoSideEffect, setter_effect);
+			getter_effect, v8::SideEffectType::kHasSideEffect);
 #endif
 		return *this;
 	}
 
+	template<typename GetFunction>
+	requires(!is_fast_function<std::decay_t<GetFunction>>::value)
+	class_& property(std::string_view name, GetFunction&& get, v8::SideEffectType getter_effect)
+	{
+		return property(name, std::forward<GetFunction>(get), detail::none{}, getter_effect);
+	}
+
 	/// Set read-only class property with V8 Fast API getter
 	template<auto GetPtr>
-	class_& property(std::string_view name, fast_function<GetPtr>)
+	class_& property(std::string_view name, fast_function<GetPtr>,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		v8::HandleScope scope(isolate());
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
 		auto getter_template = wrap_function_template<GetPtr, Traits>(
-			isolate(), fast_function<GetPtr>{},
-			v8::SideEffectType::kHasNoSideEffect);
+			isolate(), fast_function<GetPtr>{}, getter_effect, &class_info_.callbacks);
 
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
 			v8_name, getter_template,
@@ -815,8 +948,10 @@ public:
 
 	/// Set read/write class property with V8 Fast API getter and slow setter
 	template<auto GetPtr, typename SetFunction>
-	requires(!is_fast_function<std::decay_t<SetFunction>>::value)
-	class_& property(std::string_view name, fast_function<GetPtr>, SetFunction&& set)
+	requires(!is_fast_function<std::decay_t<SetFunction>>::value &&
+		!std::same_as<std::decay_t<SetFunction>, v8::SideEffectType>)
+	class_& property(std::string_view name, fast_function<GetPtr>, SetFunction&& set,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		using Setter = std::decay_t<SetFunction>;
 		static_assert(std::is_member_function_pointer_v<SetFunction> || detail::is_callable<Setter>::value, "SetFunction must be callable");
@@ -825,14 +960,13 @@ public:
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
 		auto getter_template = wrap_function_template<GetPtr, Traits>(
-			isolate(), fast_function<GetPtr>{},
-			v8::SideEffectType::kHasNoSideEffect);
+			isolate(), fast_function<GetPtr>{}, getter_effect, &class_info_.callbacks);
 		auto setter_template = v8::FunctionTemplate::New(isolate(),
 			&detail::forward_function<Traits, Setter>,
-			detail::external_data::set(isolate(), Setter(std::forward<SetFunction>(set))),
+			detail::external_data::set(isolate(), Setter(std::forward<SetFunction>(set)), &class_info_.callbacks),
 			v8::Local<v8::Signature>(), 0,
 			v8::ConstructorBehavior::kThrow,
-			v8::SideEffectType::kHasSideEffectToReceiver);
+			v8::SideEffectType::kHasSideEffect);
 
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
 			v8_name, getter_template, setter_template,
@@ -843,17 +977,16 @@ public:
 
 	/// Set read/write class property with V8 Fast API getter and setter
 	template<auto GetPtr, auto SetPtr>
-	class_& property(std::string_view name, fast_function<GetPtr>, fast_function<SetPtr>)
+	class_& property(std::string_view name, fast_function<GetPtr>, fast_function<SetPtr>,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		v8::HandleScope scope(isolate());
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate(), name);
 		auto getter_template = wrap_function_template<GetPtr, Traits>(
-			isolate(), fast_function<GetPtr>{},
-			v8::SideEffectType::kHasNoSideEffect);
+			isolate(), fast_function<GetPtr>{}, getter_effect, &class_info_.callbacks);
 		auto setter_template = wrap_function_template<SetPtr, Traits>(
-			isolate(), fast_function<SetPtr>{},
-			v8::SideEffectType::kHasSideEffectToReceiver);
+			isolate(), fast_function<SetPtr>{}, v8::SideEffectType::kHasSideEffect, &class_info_.callbacks);
 
 		class_info_.js_function_template()->PrototypeTemplate()->SetAccessorProperty(
 			v8_name, getter_template, setter_template,
@@ -926,13 +1059,13 @@ public:
 			using mem_func_type = typename detail::function_traits<Function>::template pointer_type<T>;
 			wrapped_fun = wrap_function_template<mem_func_type, Traits>(iso,
 				mem_func_type(std::forward<Function>(func)),
-				v8::SideEffectType::kHasNoSideEffect);
+				v8::SideEffectType::kHasNoSideEffect, &class_info_.callbacks);
 		}
 		else
 		{
 			using Invoker = detail::to_primitive_invoker<T, Traits, std::decay_t<Function>>;
 			v8::Local<v8::Value> data = detail::external_data::set(iso,
-				Invoker{ std::decay_t<Function>(std::forward<Function>(func)) });
+				Invoker{ std::decay_t<Function>(std::forward<Function>(func)) }, &class_info_.callbacks);
 			wrapped_fun = v8::FunctionTemplate::New(iso, &Invoker::callback, data,
 				v8::Local<v8::Signature>(), 0, v8::ConstructorBehavior::kThrow,
 				v8::SideEffectType::kHasNoSideEffect);
@@ -957,7 +1090,7 @@ public:
 
 		v8::Local<v8::Value> data = detail::external_data::set(iso,
 			Factory{ std::decay_t<BeginFn>(std::forward<BeginFn>(begin_fn)),
-				std::decay_t<EndFn>(std::forward<EndFn>(end_fn)) });
+				std::decay_t<EndFn>(std::forward<EndFn>(end_fn)) }, &class_info_.callbacks);
 
 		v8::Local<v8::FunctionTemplate> iter_tmpl = v8::FunctionTemplate::New(iso,
 			&Factory::iterator_callback, data);
@@ -985,11 +1118,13 @@ public:
 	/// v8::Isolate where the class bindings belongs
 	v8::Isolate* isolate() { return class_info_.isolate(); }
 
+	/// Template for native wrapper construction. Requires an active HandleScope.
 	v8::Local<v8::FunctionTemplate> class_function_template()
 	{
 		return class_info_.class_function_template();
 	}
 
+	/// Template for the JavaScript constructor. Requires an active HandleScope.
 	v8::Local<v8::FunctionTemplate> js_function_template()
 	{
 		return class_info_.js_function_template();
@@ -999,6 +1134,7 @@ public:
 	/// It will not take ownership of the C++ pointer.
 	static v8::Local<v8::Object> reference_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
+		detail::external_data::result_scope::check(isolate);
 		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).wrap_object(ext, 0);
 	}
 
@@ -1013,12 +1149,14 @@ public:
 	/// to allocate `ext`
 	static v8::Local<v8::Object> import_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
+		detail::external_data::result_scope::check(isolate);
 		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).wrap_object(ext, Traits::object_size(ext));
 	}
 
 	/// Get wrapped object from V8 value, may return nullptr on fail.
 	static object_pointer_type unwrap_object(v8::Isolate* isolate, v8::Local<v8::Value> value)
 	{
+		detail::count_dispatch(&detail::dispatch_counts::expected_class_lookups);
 		return Traits::template static_pointer_cast<T>(
 			detail::classes::find<Traits>(isolate, detail::type_id<T>()).unwrap_object(value));
 	}
@@ -1027,28 +1165,35 @@ public:
 	template<typename... Args>
 	static v8::Local<v8::Object> create_object(v8::Isolate* isolate, Args&&... args)
 	{
-		return import_external(isolate, object_create(std::forward<Args>(args)...));
+		detail::external_data::result_scope::check(isolate);
+		auto& registry = detail::classes::find<Traits>(isolate, detail::type_id<T>());
+		return registry.create_wrapped_object([&] { return object_create(std::forward<Args>(args)...); });
 	}
 
 	/// Find V8 object handle for a wrapped C++ object, may return empty handle on fail.
 	static v8::Local<v8::Object> find_object(v8::Isolate* isolate, object_const_pointer_type const& obj)
 	{
-		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).find_v8_object(Traits::const_pointer_cast(obj));
+		if constexpr (std::same_as<Traits, shared_ptr_traits>)
+		{
+			return find_object_by_id(isolate, const_cast<T*>(obj.get()));
+		}
+		else
+		{
+			detail::external_data::result_scope::check(isolate);
+			return detail::classes::find<Traits>(isolate, detail::type_id<T>()).find_v8_object(Traits::const_pointer_cast(obj));
+		}
 	}
 
 	/// Find V8 object handle for a wrapped C++ object, may return empty handle on fail
 	/// or wrap a copy of the obj if class_.auto_wrap_objects()
 	static v8::Local<v8::Object> find_object(v8::Isolate* isolate, T const& obj)
 	{
+		detail::external_data::result_scope::check(isolate);
 		auto& class_info = detail::classes::find<Traits>(isolate, detail::type_id<T>());
 		v8::Local<v8::Object> wrapped_object = class_info.find_v8_object(Traits::key(const_cast<T*>(&obj)));
 		if (wrapped_object.IsEmpty() && class_info.auto_wrap_objects())
 		{
-			object_pointer_type clone = Traits::clone(obj);
-			if (clone)
-			{
-				wrapped_object = class_info.wrap_object(clone, Traits::object_size(clone));
-			}
+			wrapped_object = class_info.create_wrapped_object([&] { return Traits::clone(obj); });
 		}
 		return wrapped_object;
 	}
@@ -1072,6 +1217,14 @@ public:
 	}
 
 private:
+	template<typename, typename> friend struct convert;
+
+	static v8::Local<v8::Object> find_object_by_id(v8::Isolate* isolate, object_id const& id)
+	{
+		detail::external_data::result_scope::check(isolate);
+		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).find_v8_object_by_id(id);
+	}
+
 	template<typename Function>
 	class_& function_impl(std::string_view name, Function&& func,
 		v8::SideEffectType side_effect, v8::PropertyAttribute attr)
@@ -1090,12 +1243,12 @@ private:
 		{
 			using mem_func_type = typename detail::function_traits<Function>::template pointer_type<T>;
 			wrapped_fun = wrap_function_template<mem_func_type, Traits>(isolate(),
-				mem_func_type(std::forward<Function>(func)), side_effect);
+				mem_func_type(std::forward<Function>(func)), side_effect, &class_info_.callbacks);
 		}
 		else
 		{
 			wrapped_fun = wrap_function_template<Function, Traits>(isolate(),
-				std::forward<Function>(func), side_effect);
+				std::forward<Function>(func), side_effect, &class_info_.callbacks);
 		}
 
 		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
@@ -1126,12 +1279,12 @@ private:
 		{
 			using mem_func_type = typename detail::function_traits<Function>::template pointer_type<T>;
 			wrapped_fun = wrap_function_template<mem_func_type, Traits>(isolate(),
-				mem_func_type(std::forward<Function>(func)), std::move(defs), side_effect);
+				mem_func_type(std::forward<Function>(func)), std::move(defs), side_effect, &class_info_.callbacks);
 		}
 		else
 		{
 			wrapped_fun = wrap_function_template<Function, Traits>(isolate(),
-				std::forward<Function>(func), std::move(defs), side_effect);
+				std::forward<Function>(func), std::move(defs), side_effect, &class_info_.callbacks);
 		}
 
 		v8::Local<v8::FunctionTemplate> js_func = class_info_.js_function_template();
@@ -1152,12 +1305,15 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(info.Data());
 			auto self = unwrap_object(isolate, detail::property_receiver(info));
 			if (!self)
 			{
 				throw std::runtime_error("accessing member on non-existent C++ object");
 			}
-			Attribute attr = detail::external_data::get<Attribute>(info.Data());
+			Attribute attr = callback.get<Attribute>();
+			detail::external_data::result_scope conversion(callback);
 			info.GetReturnValue().Set(to_v8(isolate, (*self).*attr));
 		}
 		catch (std::exception const& ex)
@@ -1176,12 +1332,14 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(info.Data());
 			auto self = unwrap_object(isolate, detail::property_receiver(info));
 			if (!self)
 			{
 				throw std::runtime_error("setting member on non-existent C++ object");
 			}
-			Attribute ptr = detail::external_data::get<Attribute>(info.Data());
+			Attribute ptr = callback.get<Attribute>();
 			using attr_type = typename detail::function_traits<Attribute>::return_type;
 			(*self).*ptr = v8pp::from_v8<attr_type>(isolate, value);
 		}
@@ -1204,12 +1362,15 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(args.Data());
 			auto self = unwrap_object(isolate, args.This());
 			if (!self)
 			{
 				throw std::runtime_error("accessing member on non-existent C++ object");
 			}
-			Attribute attr = detail::external_data::get<Attribute>(args.Data());
+			Attribute attr = callback.get<Attribute>();
+			detail::external_data::result_scope conversion(callback);
 			args.GetReturnValue().Set(to_v8(isolate, (*self).*attr));
 		}
 		catch (std::exception const& ex)
@@ -1229,12 +1390,14 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(args.Data());
 			auto self = unwrap_object(isolate, args.This());
 			if (!self)
 			{
 				throw std::runtime_error("setting member on non-existent C++ object");
 			}
-			Attribute ptr = detail::external_data::get<Attribute>(args.Data());
+			Attribute ptr = callback.get<Attribute>();
 			using attr_type = typename detail::function_traits<Attribute>::return_type;
 			(*self).*ptr = v8pp::from_v8<attr_type>(isolate, args[0]);
 		}
@@ -1256,19 +1419,29 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
-			auto&& prop = detail::external_data::get<Property>(args.Data());
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(args.Data());
+			auto&& prop = callback.get<Property>();
 			using Get = decltype(prop.getter);
+			auto set_result = [&](auto&& result)
+			{
+				if (!try_catch.HasCaught())
+				{
+					detail::external_data::result_scope conversion(callback);
+					args.GetReturnValue().Set(to_v8(isolate, result));
+				}
+			};
 
 			if constexpr (std::same_as<GetClass, detail::none>)
 			{
 				constexpr size_t offset = 0;
 				if constexpr (detail::is_isolate_getter<Get, offset>)
 				{
-					args.GetReturnValue().Set(to_v8(isolate, std::invoke(prop.getter, isolate)));
+					set_result(std::invoke(prop.getter, isolate));
 				}
 				else if constexpr (detail::is_getter<Get, offset>)
 				{
-					args.GetReturnValue().Set(to_v8(isolate, std::invoke(prop.getter)));
+					set_result(std::invoke(prop.getter));
 				}
 			}
 			else
@@ -1281,11 +1454,11 @@ private:
 				constexpr size_t offset = std::is_member_function_pointer_v<Get> ? 0 : 1;
 				if constexpr (detail::is_isolate_getter<Get, offset>)
 				{
-					args.GetReturnValue().Set(to_v8(isolate, std::invoke(prop.getter, *obj, isolate)));
+					set_result(std::invoke(prop.getter, *obj, isolate));
 				}
 				else if constexpr (detail::is_getter<Get, offset>)
 				{
-					args.GetReturnValue().Set(to_v8(isolate, std::invoke(prop.getter, *obj)));
+					set_result(std::invoke(prop.getter, *obj));
 				}
 			}
 		}
@@ -1307,7 +1480,9 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
-			auto&& prop = detail::external_data::get<Property>(args.Data());
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(args.Data());
+			auto&& prop = callback.get<Property>();
 			v8::Local<v8::Value> value = args[0];
 
 			if constexpr (std::same_as<SetClass, detail::none>)
@@ -1359,6 +1534,11 @@ template<typename T>
 using shared_class = class_<T, shared_ptr_traits>;
 
 void cleanup(v8::Isolate* isolate);
+
+/// Release bindings in an entered context before disposing the isolate.
+/// Keep the returned plugin images through disposal of the isolate and its C++ heap.
+std::vector<std::shared_ptr<void>> dispose_bindings(v8::Isolate* isolate,
+	std::exception_ptr* deferred_error = nullptr);
 
 } // namespace v8pp
 

@@ -6,6 +6,10 @@
 #include <atomic>
 #include <string>
 
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+#include <thread>
+#endif
+
 namespace {
 
 struct GCObj
@@ -50,13 +54,14 @@ struct GCDerived : GCBase
 
 std::atomic<int> GCDerived::derived_count = 0;
 
-void force_gc(v8::Isolate* isolate)
+void force_gc(v8::Isolate* isolate, bool drain = true)
 {
 	// Force GC twice to ensure weak callbacks are processed
 	isolate->RequestGarbageCollectionForTesting(
 		v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
 	isolate->RequestGarbageCollectionForTesting(
 		v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
+	if (drain) v8pp::detail::drain_native_destructions(isolate);
 }
 
 template<typename Traits>
@@ -64,7 +69,7 @@ void test_gc_stress_bulk()
 {
 	GCObj::instance_count = 0;
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -94,7 +99,7 @@ void test_gc_stress_mixed_lifespan()
 {
 	GCObj::instance_count = 0;
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -132,15 +137,18 @@ void test_gc_stress_mixed_lifespan()
 	{
 		v8pp::class_<GCObj, Traits>::unreference_external(isolate, obj);
 	}
-	held.clear();
-
-	force_gc(isolate);
-
 	bool constexpr use_shared_ptr = std::same_as<Traits, v8pp::shared_ptr_traits>;
-	// raw_ptr: unreference doesn't delete, so objects still exist until scope ends
-	// shared_ptr: unreference removes registry entry, shared_ptr copies in held are cleared
-	check_eq("mixed lifespan fully cleaned",
-		GCObj::instance_count.load(), use_shared_ptr ? 0 : 100);
+	if constexpr (!use_shared_ptr)
+	{
+		check_eq("unreference leaves borrowed raw objects alive", GCObj::instance_count.load(), 100);
+		for (auto obj : held)
+		{
+			Traits::destroy(obj);
+		}
+	}
+	held.clear();
+	force_gc(isolate);
+	check_eq("mixed lifespan fully cleaned", GCObj::instance_count.load(), 0);
 }
 
 template<typename Traits>
@@ -148,7 +156,7 @@ void test_gc_stress_rapid_cycles()
 {
 	GCObj::instance_count = 0;
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -177,7 +185,7 @@ void test_gc_stress_inheritance()
 	GCBase::base_count = 0;
 	GCDerived::derived_count = 0;
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -209,6 +217,145 @@ void test_gc_stress_inheritance()
 	check_eq("inheritance stress base cleanup", GCBase::base_count.load(), 0);
 }
 
+template<typename Traits>
+void test_pending_collection_with_explicit_destruction()
+{
+	using Binding = v8pp::class_<GCObj, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<GCObj>;
+	int releases = 0;
+	int reentrant_value = 0;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
+		{
+			++releases;
+			reentrant_value = run_script<int>(context, "gcControl");
+			Traits::destroy(ptr); });
+	binding.template ctor<int>();
+	context.class_("Collected", binding);
+	run_script<int>(context, "var gcControl = 42; new Collected(7); 0");
+	force_gc(isolate, false);
+	check_eq("weak GC queues native destruction for a safe drain", releases, 0);
+	Binding::destroy_objects(isolate);
+	check_eq("explicit cleanup drains already-collected native objects once", releases, 1);
+	check_eq("GC destructor can reenter JavaScript", reentrant_value, 42);
+	force_gc(isolate);
+	check_eq("later collection cannot destroy the object again", releases, 1);
+}
+
+#if V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION == 9 && V8_BUILD_NUMBER == 202 && V8_PATCH_LEVEL == 28
+template<typename Traits>
+void test_explicit_destruction_between_weak_passes()
+{
+	struct WeakPasses
+	{
+		v8::Global<v8::Object>* handle;
+		bool first = false;
+		bool second = false;
+	};
+	using Binding = v8pp::class_<GCObj, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<GCObj>;
+	int releases = 0;
+	WeakPasses passes{};
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	v8::Global<v8::Object> witness;
+	passes.handle = &witness;
+	Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
+		{
+			++releases;
+			Traits::destroy(ptr); });
+	{
+		v8::HandleScope wrapper_scope(isolate);
+		witness.Reset(isolate, Binding::create_object(isolate, 7));
+		witness.SetWeak(&passes, [](v8::WeakCallbackInfo<WeakPasses> const& first)
+			{
+				auto* observed = first.GetParameter();
+				observed->handle->Reset();
+				observed->first = true;
+				first.SetSecondPassCallback([](v8::WeakCallbackInfo<WeakPasses> const& second)
+					{ second.GetParameter()->second = true; }); }, v8::WeakCallbackType::kParameter);
+	}
+
+	// Ordinary allocation can collect the wrapper without forcing the weak
+	// second pass. Stop at the first observed collection and do not pump tasks.
+	for (int allocation = 0; allocation < 4096 && !passes.first; ++allocation)
+	{
+		v8::HandleScope garbage_scope(isolate);
+		v8::Array::New(isolate, 4096);
+	}
+	check("ordinary GC reached the first weak pass", passes.first);
+	check("the weak second pass is still pending at the owner boundary", !passes.second);
+	check_eq("first-pass collection leaves native destruction to the owner", releases, 0);
+
+	Binding::destroy_objects(isolate);
+	check("explicit retirement ran before the weak second pass", !passes.second);
+	check_eq("explicit retirement releases the pending native object once", releases, 1);
+	force_gc(isolate);
+	check("the queued weak second pass was processed", passes.second);
+	check_eq("the late weak callback does not repeat native destruction", releases, 1);
+}
+#endif
+
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+void test_managed_wrapper_thread_transfer()
+{
+	using Binding = v8pp::class_<GCObj>;
+	auto* platform = managed_test_platform();
+	if (!platform) return;
+
+	int releases = 0;
+	auto managed = v8pp::context::create_isolate(*platform);
+	auto* isolate = managed.get();
+	check("thread-transfer test uses managed wrappers", v8pp::context::has_managed_wrappers(isolate));
+	std::unique_ptr<v8pp::context> context;
+	std::exception_ptr worker_error;
+	std::thread worker([&]
+		{
+		v8::Locker lock(isolate);
+		v8::Isolate::Scope isolate_scope(isolate);
+		v8::HandleScope scope(isolate);
+		try
+		{
+			auto bound = std::make_unique<v8pp::context>(isolate, nullptr, false, false);
+			v8::Context::Scope context_scope(bound->impl());
+			Binding binding(isolate, [&](v8::Isolate*, GCObj* const& ptr)
+				{
+					++releases;
+					delete ptr;
+				});
+			binding.ctor<int>().function("get", &GCObj::get);
+			bound->class_("TransferObject", binding);
+			check_eq("worker registers a wrapper on a transferred isolate",
+				run_script<int>(*bound, "var transferObject = new TransferObject(42); transferObject.get()"), 42);
+			context = std::move(bound);
+		}
+		catch (...)
+		{
+			worker_error = std::current_exception();
+		} });
+	worker.join();
+	if (worker_error) std::rethrow_exception(worker_error);
+
+	{
+		v8::Locker lock(isolate);
+		v8::Isolate::Scope isolate_scope(isolate);
+		v8::HandleScope scope(isolate);
+		auto bound = std::move(context);
+		v8::Context::Scope context_scope(bound->impl());
+		check_eq("the same wrapper dispatches after returning to the creator thread",
+			run_script<int>(*bound, "transferObject.get()"), 42);
+		run_script<bool>(*bound, "transferObject = null; true");
+		force_gc(isolate);
+		check_eq("GC retires the transferred managed wrapper once", releases, 1);
+		v8pp::dispose_bindings(isolate);
+		check_eq("final disposal preserves the transferred wrapper's release count", releases, 1);
+	}
+}
+#endif
+
 } // anonymous namespace
 
 void test_gc_stress()
@@ -216,7 +363,7 @@ void test_gc_stress()
 	{
 		std::weak_ptr<int> captured;
 		{
-			v8pp::context context;
+			auto context = make_test_context();
 			v8::HandleScope scope(context.isolate());
 			auto value = std::make_shared<int>(42);
 			captured = value;
@@ -244,7 +391,7 @@ void test_gc_stress()
 		};
 		auto check_const_property = []<typename Traits>()
 		{
-			v8pp::context context;
+			auto context = make_test_context();
 			auto* isolate = context.isolate();
 			v8::HandleScope scope(isolate);
 			v8pp::class_<Right, Traits> base(isolate);
@@ -270,4 +417,13 @@ void test_gc_stress()
 
 	test_gc_stress_inheritance<v8pp::raw_ptr_traits>();
 	test_gc_stress_inheritance<v8pp::shared_ptr_traits>();
+	test_pending_collection_with_explicit_destruction<v8pp::raw_ptr_traits>();
+	test_pending_collection_with_explicit_destruction<v8pp::shared_ptr_traits>();
+#if V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION == 9 && V8_BUILD_NUMBER == 202 && V8_PATCH_LEVEL == 28
+	test_explicit_destruction_between_weak_passes<v8pp::raw_ptr_traits>();
+	test_explicit_destruction_between_weak_passes<v8pp::shared_ptr_traits>();
+#endif
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+	test_managed_wrapper_thread_transfer();
+#endif
 }

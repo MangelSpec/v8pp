@@ -8,7 +8,7 @@ void test_promise()
 {
 	// Test 1: immediate resolve with int
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -31,7 +31,7 @@ void test_promise()
 
 	// Test 2: immediate resolve with string
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -52,7 +52,7 @@ void test_promise()
 
 	// Test 3: immediate reject with error message
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -73,7 +73,7 @@ void test_promise()
 
 	// Test 4: reject with raw V8 value
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -94,7 +94,7 @@ void test_promise()
 
 	// Test 5: promise<void>
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -115,7 +115,7 @@ void test_promise()
 
 	// Test 6: void promise rejection
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -136,7 +136,7 @@ void test_promise()
 
 	// Test 7: promise with double
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -157,7 +157,7 @@ void test_promise()
 
 	// Test 8: promise chaining
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -180,7 +180,7 @@ void test_promise()
 
 	// Test 9: verify return type is actually a Promise
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 

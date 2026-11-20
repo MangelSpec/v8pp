@@ -56,6 +56,59 @@ if (V8_ENABLE_SANDBOX)
 	list(APPEND V8PP_DEFINES V8_ENABLE_SANDBOX)
 endif()
 
+if(V8PP_ENABLE_MANAGED_WRAPPERS)
+	if(V8PP_HEADER_ONLY)
+		message(FATAL_ERROR "V8PP_ENABLE_MANAGED_WRAPPERS requires the compiled v8pp library to share one managed isolate identity across modules.")
+	endif()
+	if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+		message(FATAL_ERROR "V8PP_ENABLE_MANAGED_WRAPPERS requires the verified V8 Release CRT and iterator ABI.")
+	endif()
+	if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8
+		OR NOT CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64"
+		OR NOT V8_COMPRESS_POINTERS OR V8_ENABLE_SANDBOX)
+		message(FATAL_ERROR "V8PP_ENABLE_MANAGED_WRAPPERS requires MSVC Windows x64 and V8 pointer compression with the sandbox disabled.")
+	endif()
+	if(NOT V8PP_MANAGED_WRAPPERS_DATA_SLOT MATCHES "^[0-3]$"
+		OR V8PP_MANAGED_WRAPPERS_DATA_SLOT EQUAL V8PP_ISOLATE_DATA_SLOT)
+		message(FATAL_ERROR "V8PP_MANAGED_WRAPPERS_DATA_SLOT must be a V8 isolate slot (0-3) distinct from V8PP_ISOLATE_DATA_SLOT.")
+	endif()
+
+	get_target_property(_v8pp_managed_links V8::V8 INTERFACE_LINK_LIBRARIES)
+	if(NOT IS_ABSOLUTE "${CUSTOM_V8_LIB_PATH_ABS}" OR NOT IS_ABSOLUTE "${CUSTOM_V8_INCLUDE_PATH_ABS}"
+		OR NOT CUSTOM_V8_LIB_PATH_ABS IN_LIST _v8pp_managed_links
+		OR NOT EXISTS "${CUSTOM_V8_LIB_PATH_ABS}"
+		OR NOT EXISTS "${CUSTOM_V8_INCLUDE_PATH_ABS}/v8-version.h")
+		message(FATAL_ERROR "V8PP_ENABLE_MANAGED_WRAPPERS requires the pinned GN-built V8 monolith and headers linked by V8::V8. Set CUSTOM_V8_LIB_PATH_ABS and CUSTOM_V8_INCLUDE_PATH_ABS.")
+	endif()
+
+	file(STRINGS "${CUSTOM_V8_INCLUDE_PATH_ABS}/v8-version.h" _v8pp_v8_version
+		REGEX "^#define V8_(MAJOR_VERSION|MINOR_VERSION|BUILD_NUMBER|PATCH_LEVEL) [0-9]+$")
+	if(NOT _v8pp_v8_version STREQUAL "#define V8_MAJOR_VERSION 12;#define V8_MINOR_VERSION 9;#define V8_BUILD_NUMBER 202;#define V8_PATCH_LEVEL 28")
+		message(FATAL_ERROR "V8PP_ENABLE_MANAGED_WRAPPERS requires V8 12.9.202.28.")
+	endif()
+
+	get_filename_component(_v8pp_monolith_dir "${CUSTOM_V8_LIB_PATH_ABS}" DIRECTORY)
+	set(_v8pp_gn_metadata "${_v8pp_monolith_dir}/v8_monolith.ninja")
+	if(NOT EXISTS "${_v8pp_gn_metadata}")
+		message(FATAL_ERROR "V8PP_ENABLE_MANAGED_WRAPPERS requires the V8 monolith's GN metadata at ${_v8pp_gn_metadata} to verify its ABI.")
+	endif()
+	set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_v8pp_gn_metadata}"
+		"${CUSTOM_V8_INCLUDE_PATH_ABS}/v8-version.h")
+	file(STRINGS "${_v8pp_gn_metadata}" _v8pp_gn_defines LIMIT_COUNT 1 REGEX "^defines = ")
+	string(REGEX MATCHALL "-DCPPGC_[A-Z0-9_]+" _v8pp_cppgc_abi "${_v8pp_gn_defines}")
+	list(SORT _v8pp_cppgc_abi)
+	if(NOT _v8pp_cppgc_abi STREQUAL "-DCPPGC_CAGED_HEAP;-DCPPGC_ENABLE_LARGER_CAGE;-DCPPGC_POINTER_COMPRESSION;-DCPPGC_SLIM_WRITE_BARRIER;-DCPPGC_YOUNG_GENERATION"
+		OR NOT _v8pp_gn_defines MATCHES " -DV8_COMPRESS_POINTERS "
+		OR NOT _v8pp_gn_defines MATCHES " -DV8_COMPRESS_POINTERS_IN_SHARED_CAGE "
+		OR NOT _v8pp_gn_defines MATCHES " -DV8_31BIT_SMIS_ON_64BIT_ARCH "
+		OR NOT _v8pp_gn_defines MATCHES " -DV8_TARGET_ARCH_X64( |$)"
+		OR _v8pp_gn_defines MATCHES " -D(V8_ENABLE_SANDBOX|V8_ENABLE_CHECKS|DEBUG)([ =]|$)")
+		message(FATAL_ERROR "V8PP_ENABLE_MANAGED_WRAPPERS requires the verified V8 Release x64 pointer-compression and cppgc ABI. The linked monolith's GN definitions differ.")
+	endif()
+	string(REPLACE "-D" "" _v8pp_cppgc_defines "${_v8pp_cppgc_abi}")
+	list(APPEND V8PP_DEFINES V8_COMPRESS_POINTERS_IN_SHARED_CAGE ${_v8pp_cppgc_defines})
+endif()
+
 set(V8PP_HEADERS
 	${CMAKE_CURRENT_BINARY_DIR}/config.hpp
 	call_from_v8.hpp
@@ -64,9 +117,13 @@ set(V8PP_HEADERS
 	context.hpp
 	context_store.hpp
 	convert.hpp
+	dispatch_diagnostics.hpp
+	fast_api.hpp
 	function.hpp
 	json.hpp
+	managed_wrappers.hpp
 	module.hpp
+	native_dispatch.hpp
 	object.hpp
 	overload.hpp
 	promise.hpp
@@ -85,6 +142,7 @@ if(V8PP_HEADER_ONLY)
 		class.ipp
 		context_store.ipp
 		function.ipp
+		native_dispatch.ipp
 		json.ipp
 		string_utils.ipp
 		throw_ex.ipp

@@ -180,11 +180,13 @@ struct convert<String, void>
 			return std::nullopt;
 		}
 
+		detail::count_dispatch(&detail::dispatch_counts::string_conversions);
 		return extract_string(isolate, str);
 	}
 
 	static to_type to_v8(v8::Isolate* isolate, std::basic_string_view<Char, Traits> value)
 	{
+		detail::count_dispatch(&detail::dispatch_counts::string_conversions);
 		if constexpr (sizeof(Char) == 1)
 		{
 			return v8::String::NewFromUtf8(isolate,
@@ -1462,7 +1464,7 @@ struct convert<std::shared_ptr<T>, void>
 
 	static to_type to_v8(v8::Isolate* isolate, std::shared_ptr<T> const& value)
 	{
-		return class_<class_type, shared_ptr_traits>::find_object(isolate, value);
+		return class_<class_type, shared_ptr_traits>::find_object_by_id(isolate, const_cast<class_type*>(value.get()));
 	}
 };
 
@@ -1665,18 +1667,11 @@ v8::Local<v8::Array> to_v8(v8::Isolate* isolate, std::initializer_list<T> const&
 	return to_v8(isolate, init.begin(), init.end());
 }
 
+/// Create a Local rooted in the active HandleScope.
 template<typename T>
 v8::Local<T> to_local(v8::Isolate* isolate, v8::PersistentBase<T> const& handle)
 {
-	if (handle.IsWeak())
-	{
-		return v8::Local<T>::New(isolate, handle);
-	}
-	else
-	{
-		return *reinterpret_cast<v8::Local<T>*>(
-			const_cast<v8::PersistentBase<T>*>(&handle));
-	}
+	return v8::Local<T>::New(isolate, handle);
 }
 
 inline invalid_argument::invalid_argument(v8::Isolate* isolate, v8::Local<v8::Value> value, char const* expected_type)

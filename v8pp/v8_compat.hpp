@@ -4,6 +4,17 @@
 
 namespace v8pp::detail {
 
+inline v8::Local<v8::Value> wrapper_prototype(v8::Local<v8::Object> object)
+{
+#if V8_MAJOR_VERSION > 14 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 7)
+	return object->GetPrototype();
+#elif V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+	return object->GetPrototypeV2();
+#else
+	return object->GetPrototype();
+#endif
+}
+
 #if V8_MAJOR_VERSION >= 15
 using setter_callback_info = v8::PropertyCallbackInfo<v8::Boolean>;
 using accessor_setter_callback = v8::AccessorNameSetterCallbackV2;

@@ -27,7 +27,7 @@ struct Widget
 
 void bench_property()
 {
-    v8pp::context context;
+    auto context = v8pp::bench::make_context();
     v8::Isolate* isolate = context.isolate();
     v8::HandleScope scope(isolate);
 

@@ -1027,9 +1027,21 @@ void test_conversion_failures(v8pp::context& context)
 
 void test_convert()
 {
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
+
+	v8::Global<v8::Integer> persistent;
+	check("empty persistent yields an empty local", v8pp::to_local(isolate, persistent).IsEmpty());
+	{
+		v8::HandleScope handles(isolate);
+		persistent.Reset(isolate, v8::Integer::New(isolate, 42));
+	}
+	auto const original = v8pp::to_local(isolate, persistent);
+	persistent.Reset();
+	persistent.Reset(isolate, v8::Integer::New(isolate, 43));
+	check_eq("local survives reset and replacement of persistent", original->Value(), 42);
+	check_eq("replacement persistent has its own local", v8pp::to_local(isolate, persistent)->Value(), 43);
 
 	test_conv(isolate, 1);
 	test_conv(isolate, 2.2);

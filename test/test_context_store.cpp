@@ -57,7 +57,7 @@ void test_context_store()
 
 	// Test 1: basic set/get with V8 value
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -76,7 +76,7 @@ void test_context_store()
 
 	// Test 2: typed set/get
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -105,7 +105,7 @@ void test_context_store()
 
 	// Test 3: has / remove
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -122,7 +122,7 @@ void test_context_store()
 
 	// Test 4: clear / size / keys
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -149,7 +149,7 @@ void test_context_store()
 
 	// Test 5: overwrite
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -165,7 +165,7 @@ void test_context_store()
 
 	// Test 6: dot-separated names
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -270,7 +270,7 @@ void test_context_store()
 
 	// Test 9: bulk save_from / restore_to
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -295,7 +295,7 @@ void test_context_store()
 
 	// Test 10: JSON deep copy
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -321,7 +321,7 @@ void test_context_store()
 
 	// Test 11: move semantics
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 

@@ -29,7 +29,8 @@ inline constexpr bool is_isolate_setter = CallTraits::arg_count == 2 + Offset &&
 
 template<typename Get, typename... ObjArg>
 void property_get(Get& getter, v8::Local<v8::Name> name,
-	v8::PropertyCallbackInfo<v8::Value> const& info, ObjArg&... obj)
+	v8::PropertyCallbackInfo<v8::Value> const& info, external_data::pin const& callback,
+	v8::TryCatch& caught, ObjArg&... obj)
 {
 	constexpr size_t offset = sizeof...(ObjArg) == 0 || std::is_member_function_pointer_v<Get> ? 0 : 1;
 
@@ -38,17 +39,29 @@ void property_get(Get& getter, v8::Local<v8::Name> name,
 	if constexpr (is_direct_getter<Get, offset>)
 	{
 		(void)isolate;
+		(void)caught;
+		external_data::result_scope conversion(callback);
 		std::invoke(getter, obj..., name, info);
 	}
 	else if constexpr (is_isolate_getter<Get, offset>)
 	{
 		(void)name;
-		info.GetReturnValue().Set(to_v8(isolate, std::invoke(getter, obj..., isolate)));
+		decltype(auto) result = std::invoke(getter, obj..., isolate);
+		if (!caught.HasCaught())
+		{
+			external_data::result_scope conversion(callback);
+			info.GetReturnValue().Set(to_v8(isolate, result));
+		}
 	}
 	else if constexpr (is_getter<Get, offset>)
 	{
 		(void)name;
-		info.GetReturnValue().Set(to_v8(isolate, std::invoke(getter, obj...)));
+		decltype(auto) result = std::invoke(getter, obj...);
+		if (!caught.HasCaught())
+		{
+			external_data::result_scope conversion(callback);
+			info.GetReturnValue().Set(to_v8(isolate, result));
+		}
 	}
 	else
 	{
@@ -105,16 +118,18 @@ void property_get(v8::Local<v8::Name> name, v8::PropertyCallbackInfo<v8::Value> 
 	v8::TryCatch try_catch(isolate);
 	try
 	{
-		auto&& property = detail::external_data::get<Property>(info.Data());
+		native_dispatch_scope dispatch(isolate);
+		external_data::pin callback(info.Data());
+		auto& property = callback.get<Property>();
 		if constexpr (std::same_as<GetClass, none>)
 		{
-			property_get(property.getter, name, info);
+			property_get(property.getter, name, info, callback, try_catch);
 		}
 		else
 		{
 			auto obj = v8pp::class_<GetClass, Traits>::unwrap_object(isolate, property_receiver(info));
 			if (!obj) throw std::runtime_error("accessing property on non-existent C++ object");
-			property_get(property.getter, name, info, *obj);
+			property_get(property.getter, name, info, callback, try_catch, *obj);
 		}
 	}
 	catch (std::exception const& ex)
@@ -131,7 +146,9 @@ void property_set(v8::Local<v8::Name> name, v8::Local<v8::Value> value, setter_c
 	v8::TryCatch try_catch(isolate);
 	try
 	{
-		auto&& property = detail::external_data::get<Property>(info.Data());
+		native_dispatch_scope dispatch(isolate);
+		external_data::pin callback(info.Data());
+		auto& property = callback.get<Property>();
 		if constexpr (std::same_as<SetClass, none>)
 		{
 			property_set(property.setter, name, value, info);

@@ -2,6 +2,7 @@
 
 #if !V8PP_HEADER_ONLY
 #include "v8pp/class.ipp"
+#include "v8pp/native_dispatch.ipp"
 
 namespace v8pp::detail {
 

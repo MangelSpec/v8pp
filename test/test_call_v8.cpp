@@ -10,7 +10,7 @@ static void v8_arg_count(v8::FunctionCallbackInfo<v8::Value> const& args)
 
 void test_call_v8()
 {
-	v8pp::context context;
+	auto context = make_test_context();
 
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);

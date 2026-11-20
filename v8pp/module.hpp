@@ -103,7 +103,8 @@ public:
 
 	/// Set a C++ variable in the module with specified name
 	template<typename Variable>
-	module& var(char const* name, Variable& var)
+	module& var(char const* name, Variable& var,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		static_assert(!detail::is_callable<Variable>::value, "Variable must not be callable");
 		v8::HandleScope scope(isolate_);
@@ -115,21 +116,23 @@ public:
 #if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 1)
 		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
 			v8::PropertyAttribute::DontDelete,
-			v8::SideEffectType::kHasNoSideEffect,
-			v8::SideEffectType::kHasSideEffectToReceiver);
+			getter_effect,
+			v8::SideEffectType::kHasSideEffect);
 #else
 		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
 			v8::PropertyAttribute::DontDelete, v8::DEFAULT,
-			v8::SideEffectType::kHasNoSideEffect,
-			v8::SideEffectType::kHasSideEffectToReceiver);
+			getter_effect,
+			v8::SideEffectType::kHasSideEffect);
 #endif
 		return *this;
 	}
 
 	/// Set property in the module with specified name and get/set functions
 	template<typename GetFunction, typename SetFunction = detail::none>
-	requires(!is_fast_function<std::decay_t<GetFunction>>::value)
-	module& property(char const* name, GetFunction&& get, SetFunction&& set = {})
+	requires(!is_fast_function<std::decay_t<GetFunction>>::value &&
+		!std::same_as<std::decay_t<SetFunction>, v8::SideEffectType>)
+	module& property(char const* name, GetFunction&& get, SetFunction&& set = {},
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		using Getter = typename std::decay_t<GetFunction>;
 		using Setter = typename std::decay_t<SetFunction>;
@@ -137,39 +140,66 @@ public:
 		static_assert(detail::is_callable<Getter>::value, "GetFunction must be callable");
 		static_assert(detail::is_callable<Setter>::value || std::same_as<Setter, detail::none>, "SetFunction must be callable");
 
-		using property_type = v8pp::property<Getter, Setter, detail::none, detail::none>;
-		using Traits = detail::none;
-
 		v8::HandleScope scope(isolate_);
-
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
-		v8::AccessorNameGetterCallback getter = property_type::template get<Traits>;
-		detail::accessor_setter_callback setter = property_type::is_readonly ? nullptr : property_type::template set<Traits>;
-		v8::Local<v8::Value> data = detail::external_data::set(isolate_, property_type(std::move(get), std::move(set)));
+		if constexpr (detail::is_direct_getter<Getter, 0> || detail::is_direct_setter<Setter, 0>)
+		{
+			using property_type = v8pp::property<Getter, Setter, detail::none, detail::none>;
+			v8::AccessorNameGetterCallback getter = property_type::template get<detail::none>;
+			detail::accessor_setter_callback setter = property_type::is_readonly
+				? nullptr : property_type::template set<detail::none>;
+			auto data = detail::external_data::set(isolate_,
+				property_type(std::forward<GetFunction>(get), std::forward<SetFunction>(set)));
 
-		v8::SideEffectType setter_effect = property_type::is_readonly ? v8::SideEffectType::kHasSideEffect : v8::SideEffectType::kHasSideEffectToReceiver;
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 1)
-		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
-			v8::PropertyAttribute::DontDelete,
-			v8::SideEffectType::kHasNoSideEffect, setter_effect);
-#else
-		obj_->SetNativeDataProperty(v8_name, getter, setter, data,
-			v8::PropertyAttribute::DontDelete, v8::DEFAULT,
-			v8::SideEffectType::kHasNoSideEffect, setter_effect);
+			// Direct callbacks require PropertyCallbackInfo, which V8 only
+			// supplies for a native data property.
+			obj_->SetNativeDataProperty(v8_name, getter, setter, data,
+				v8::PropertyAttribute::DontDelete,
+#if V8_MAJOR_VERSION < 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION < 1)
+				v8::DEFAULT,
 #endif
+				getter_effect, v8::SideEffectType::kHasSideEffect);
+		}
+		else
+		{
+			auto getter_template = v8::FunctionTemplate::New(isolate_,
+				&detail::forward_function<raw_ptr_traits, Getter>,
+				detail::external_data::set(isolate_, Getter(std::forward<GetFunction>(get))),
+				v8::Local<v8::Signature>(), 0, v8::ConstructorBehavior::kThrow, getter_effect);
+			v8::Local<v8::FunctionTemplate> setter_template;
+			if constexpr (!std::same_as<Setter, detail::none>)
+			{
+				setter_template = v8::FunctionTemplate::New(isolate_,
+					&detail::forward_function<raw_ptr_traits, Setter>,
+					detail::external_data::set(isolate_, Setter(std::forward<SetFunction>(set))),
+					v8::Local<v8::Signature>(), 0, v8::ConstructorBehavior::kThrow,
+					v8::SideEffectType::kHasSideEffect);
+			}
+			v8::PropertyAttribute attrs = std::same_as<Setter, detail::none>
+				? v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete) : v8::DontDelete;
+			obj_->SetAccessorProperty(v8_name, getter_template, setter_template, attrs);
+		}
 		return *this;
+	}
+
+	template<typename GetFunction>
+	requires(!is_fast_function<std::decay_t<GetFunction>>::value)
+	module& property(char const* name, GetFunction&& get, v8::SideEffectType getter_effect)
+	{
+		return property(name, std::forward<GetFunction>(get), detail::none{}, getter_effect);
 	}
 
 	/// Set read-only module property with V8 Fast API getter
 	template<auto GetPtr>
-	module& property(char const* name, fast_function<GetPtr>)
+	module& property(char const* name, fast_function<GetPtr>,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		v8::HandleScope scope(isolate_);
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
 		auto getter_template = wrap_function_template<GetPtr>(
 			isolate_, fast_function<GetPtr>{},
-			v8::SideEffectType::kHasNoSideEffect);
+			getter_effect);
 
 		obj_->SetAccessorProperty(v8_name, getter_template,
 			v8::Local<v8::FunctionTemplate>(),
@@ -180,8 +210,10 @@ public:
 
 	/// Set read/write module property with V8 Fast API getter and slow setter
 	template<auto GetPtr, typename SetFunction>
-	requires(!is_fast_function<std::decay_t<SetFunction>>::value)
-	module& property(char const* name, fast_function<GetPtr>, SetFunction&& set)
+	requires(!is_fast_function<std::decay_t<SetFunction>>::value &&
+		!std::same_as<std::decay_t<SetFunction>, v8::SideEffectType>)
+	module& property(char const* name, fast_function<GetPtr>, SetFunction&& set,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		using Setter = std::decay_t<SetFunction>;
 		static_assert(detail::is_callable<Setter>::value, "SetFunction must be callable");
@@ -191,13 +223,13 @@ public:
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
 		auto getter_template = wrap_function_template<GetPtr>(
 			isolate_, fast_function<GetPtr>{},
-			v8::SideEffectType::kHasNoSideEffect);
+			getter_effect);
 		auto setter_template = v8::FunctionTemplate::New(isolate_,
 			&detail::forward_function<raw_ptr_traits, Setter>,
 			detail::external_data::set(isolate_, Setter(std::forward<SetFunction>(set))),
 			v8::Local<v8::Signature>(), 0,
 			v8::ConstructorBehavior::kThrow,
-			v8::SideEffectType::kHasSideEffectToReceiver);
+			v8::SideEffectType::kHasSideEffect);
 
 		obj_->SetAccessorProperty(v8_name, getter_template, setter_template,
 			v8::PropertyAttribute(v8::DontDelete));
@@ -207,17 +239,18 @@ public:
 
 	/// Set read/write module property with V8 Fast API getter and setter
 	template<auto GetPtr, auto SetPtr>
-	module& property(char const* name, fast_function<GetPtr>, fast_function<SetPtr>)
+	module& property(char const* name, fast_function<GetPtr>, fast_function<SetPtr>,
+		v8::SideEffectType getter_effect = v8::SideEffectType::kHasSideEffect)
 	{
 		v8::HandleScope scope(isolate_);
 
 		v8::Local<v8::Name> v8_name = v8pp::to_v8_name(isolate_, name);
 		auto getter_template = wrap_function_template<GetPtr>(
 			isolate_, fast_function<GetPtr>{},
-			v8::SideEffectType::kHasNoSideEffect);
+			getter_effect);
 		auto setter_template = wrap_function_template<SetPtr>(
 			isolate_, fast_function<SetPtr>{},
-			v8::SideEffectType::kHasSideEffectToReceiver);
+			v8::SideEffectType::kHasSideEffect);
 
 		obj_->SetAccessorProperty(v8_name, getter_template, setter_template,
 			v8::PropertyAttribute(v8::DontDelete));
@@ -261,7 +294,10 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
-			Variable* var = detail::external_data::get<Variable*>(info.Data());
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(info.Data());
+			Variable* var = callback.get<Variable*>();
+			detail::external_data::result_scope conversion(callback);
 			info.GetReturnValue().Set(to_v8(isolate, *var));
 		}
 		catch (std::exception const& ex)
@@ -279,7 +315,9 @@ private:
 		v8::TryCatch try_catch(isolate);
 		try
 		{
-			Variable* var = detail::external_data::get<Variable*>(info.Data());
+			detail::native_dispatch_scope dispatch(isolate);
+			detail::external_data::pin callback(info.Data());
+			Variable* var = callback.get<Variable*>();
 			*var = v8pp::from_v8<Variable>(isolate, value);
 #if V8_MAJOR_VERSION >= 15
 			info.GetReturnValue().Set(true);

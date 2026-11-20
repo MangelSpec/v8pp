@@ -56,7 +56,7 @@ int TrackedList::instances = 0;
 template<typename Traits>
 void test_iterator_lifetime()
 {
-	v8pp::context context;
+	auto context = make_test_context();
 	auto* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 	v8pp::class_<TrackedList, Traits> binding(isolate);
@@ -70,6 +70,7 @@ void test_iterator_lifetime()
 	{
 		isolate->RequestGarbageCollectionForTesting(v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
 		isolate->RequestGarbageCollectionForTesting(v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
+		v8pp::drain_native_destructions(isolate);
 	};
 	collect();
 	check_eq("extracted next keeps its native container alive", TrackedList::instances, 1);
@@ -97,7 +98,7 @@ void test_symbol()
 
 	// Test to_string_tag
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -117,7 +118,7 @@ void test_symbol()
 
 	// Test to_primitive with member function
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -139,7 +140,7 @@ void test_symbol()
 
 	// Test to_primitive with lambda
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -160,7 +161,7 @@ void test_symbol()
 
 	// Test iterable with int vector (member begin/end)
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -193,7 +194,7 @@ void test_symbol()
 
 	// Test iterable with string vector
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -216,7 +217,7 @@ void test_symbol()
 
 	// Test iterable with empty container
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -239,7 +240,7 @@ void test_symbol()
 
 	// Test iterable with lambda begin/end
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -266,7 +267,7 @@ void test_symbol()
 
 	// Test combined: to_string_tag + iterable
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 

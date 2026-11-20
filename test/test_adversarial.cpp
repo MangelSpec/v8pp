@@ -12,11 +12,21 @@ namespace {
 struct Adv
 {
 	int value;
+	mutable int getter_calls = 0;
+	int setter_calls = 0;
 
 	explicit Adv(int v = 0)
 		: value(v) {}
-	int get() const { return value; }
-	void set(int v) { value = v; }
+	int get() const
+	{
+		++getter_calls;
+		return value;
+	}
+	void set(int v)
+	{
+		++setter_calls;
+		value = v;
+	}
 	int add(int x) const { return value + x; }
 };
 
@@ -68,7 +78,7 @@ std::atomic<int> ThrowingObj::instance_count = 0;
 template<typename Traits>
 void test_adversarial_js()
 {
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -167,17 +177,6 @@ void test_adversarial_js()
 			"try { Object.setPrototypeOf(b, a); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
 
-	// GetOwnPropertyDescriptor on native property — should not crash.
-	// Property may be on prototype (not own), so descriptor can be undefined.
-	{
-		auto result = run_script<std::string>(context,
-			"var x = new Adv(7);"
-			"var desc = Object.getOwnPropertyDescriptor(x, 'value');"
-			"desc !== undefined ? 'own' : 'proto'");
-		check("getOwnPropertyDescriptor (no crash)",
-			result == "own" || result == "proto");
-	}
-
 	// Spread wrapped object — must not crash
 	{
 		auto result = run_script<std::string>(context,
@@ -213,19 +212,59 @@ void test_adversarial_js()
 			"try { var x = new Adv(5); x.add.call({value: 99}, 1); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
 
-	// Property getter extracted and called on wrong receiver
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+	check("Adv prototype has native getter and setter descriptors", run_script<bool>(context, R"(
+		var receiver = new Adv(5);
+		var descriptor = Object.getOwnPropertyDescriptor(Adv.prototype, 'prop');
+		!!descriptor && typeof descriptor.get === 'function' && typeof descriptor.set === 'function';
+	)"));
+	auto counted_adv = v8pp::class_<Adv, Traits>::unwrap_object(isolate, context.run_script("receiver"));
+	check("Adv descriptor control has a registered receiver", bool(counted_adv));
+	check_eq("descriptor lookup does not call the getter", counted_adv->getter_calls, 0);
+	check_eq("prototype getter called on a genuine Adv", run_script<int>(context, "descriptor.get.call(receiver)"), 5);
+	check("prototype setter called on a genuine Adv",
+		run_script<bool>(context, "descriptor.set.call(receiver, 8) === undefined"));
+	check_eq("prototype setter writes to the native Adv", counted_adv->value, 8);
+	check_eq("prototype getter dispatch count", counted_adv->getter_calls, 1);
+	check_eq("prototype setter dispatch count", counted_adv->setter_calls, 1);
+
+	using OtherTraits = std::conditional_t<std::same_as<Traits, v8pp::raw_ptr_traits>,
+		v8pp::shared_ptr_traits, v8pp::raw_ptr_traits>;
+	struct OtherFamily
+	{
+	};
+	v8pp::class_<OtherFamily, OtherTraits> other_family(isolate);
+	other_family.template ctor<>();
+	context.class_("OtherFamily", other_family);
+	auto foreign_template = v8::ObjectTemplate::New(isolate);
+	foreign_template->SetInternalFieldCount(2);
+	context.value("foreign", foreign_template->NewInstance(context.impl()).ToLocalChecked());
+	context.value("shell", adv_class.class_function_template()->GetFunction(context.impl()).ToLocalChecked()->NewInstance(context.impl()).ToLocalChecked());
+	check("valid delegates still reach the registered native getter", run_script<bool>(context, "descriptor.get.call(Object.create(receiver)) === 8"));
+	check_eq("prototype delegate dispatch count", counted_adv->getter_calls, 2);
+	check("nonmatching native wrappers stop prototype delegation", run_script<bool>(context, R"(
+		(() => {
+			for (const wrapper of [foreign, shell, new Adv2('other type'), new OtherFamily()]) {
+				Object.setPrototypeOf(wrapper, receiver);
+				let rejected = false;
+				try { descriptor.get.call(wrapper); } catch (error) { rejected = error instanceof Error; }
+				if (!rejected) return false;
+			}
+			return true;
+		})()
+	)"));
+	check_eq("rejected receivers never reach native getter", counted_adv->getter_calls, 2);
+
 	check_eq("property getter on wrong receiver",
 		run_script<std::string>(context,
-			"var desc = Object.getOwnPropertyDescriptor(new Adv(5), 'prop');"
-			"try { desc.get.call({}); 'no error'; } catch(e) { 'caught'; }"),
+			"try { descriptor.get.call({}); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
 
-	// Property setter extracted and called on wrong receiver
 	check_eq("property setter on wrong receiver",
 		run_script<std::string>(context,
-			"var desc = Object.getOwnPropertyDescriptor(new Adv(5), 'prop');"
-			"try { desc.set.call({}, 42); 'no error'; } catch(e) { 'caught'; }"),
+			"try { descriptor.set.call({}, 42); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
+#endif
 
 	// Deep prototype chain (beyond 16 limit)
 	check_eq("deep prototype chain",
@@ -245,7 +284,7 @@ void test_exception_safety()
 {
 	ThrowingObj::instance_count = 0;
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 

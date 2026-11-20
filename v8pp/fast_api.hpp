@@ -63,74 +63,6 @@ struct is_fast_api_compatible<R (C::*)(Args...) const>
 {
 };
 
-#ifdef V8PP_HAS_FAST_API_HEADER
-
-/// Fast callback wrapper — generates a static function with the V8 fast API signature.
-/// Uses NTTP to bake the function pointer at compile time so V8 can call it directly.
-template<auto FuncPtr>
-struct fast_callback;
-
-/// Free function: R(*)(Args...)
-template<typename R, typename... Args, R (*FuncPtr)(Args...)>
-struct fast_callback<FuncPtr>
-{
-	static R call(v8::Local<v8::Object> /*receiver*/, Args... args,
-		v8::FastApiCallbackOptions& /*options*/)
-	{
-		return FuncPtr(args...);
-	}
-};
-
-/// Member function: R(C::*)(Args...) — extracts C++ object from receiver internal field 0
-template<typename R, typename C, typename... Args, R (C::*MemPtr)(Args...)>
-struct fast_callback<MemPtr>
-{
-	static R call(v8::Local<v8::Object> receiver, Args... args,
-		v8::FastApiCallbackOptions& options)
-	{
-		void* ptr = detail::aligned_pointer(receiver, 0);
-		if (!ptr)
-		{
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
-			options.isolate->ThrowError("Invalid receiver: null C++ object");
-#else
-			options.fallback = true;
-#endif
-			if constexpr (std::is_void_v<R>)
-				return;
-			else
-				return R{};
-		}
-		return (static_cast<C*>(ptr)->*MemPtr)(args...);
-	}
-};
-
-/// Const member function: R(C::*)(Args...) const
-template<typename R, typename C, typename... Args, R (C::*MemPtr)(Args...) const>
-struct fast_callback<MemPtr>
-{
-	static R call(v8::Local<v8::Object> receiver, Args... args,
-		v8::FastApiCallbackOptions& options)
-	{
-		void* ptr = detail::aligned_pointer(receiver, 0);
-		if (!ptr)
-		{
-#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
-			options.isolate->ThrowError("Invalid receiver: null C++ object");
-#else
-			options.fallback = true;
-#endif
-			if constexpr (std::is_void_v<R>)
-				return;
-			else
-				return R{};
-		}
-		return (static_cast<C const*>(ptr)->*MemPtr)(args...);
-	}
-};
-
-#endif // V8PP_HAS_FAST_API_HEADER
-
 } // namespace detail
 
 /// Tag to detect fast_function types
@@ -140,9 +72,8 @@ struct is_fast_function : std::false_type
 };
 
 /// Compile-time Fast API function wrapper.
-/// Wraps a function pointer as a non-type template parameter to enable V8 Fast API callbacks.
-/// Compatible signatures get both a fast callback (called directly by V8's JIT) and
-/// the standard slow callback. Incompatible signatures silently fall back to slow-only.
+/// Wraps a function pointer as a non-type template parameter. The binding
+/// uses checked dispatch so it can authenticate receivers and retire callbacks.
 /// Usage: module.function("add", v8pp::fast_fn<&add>);
 template<auto FuncPtr>
 struct fast_function

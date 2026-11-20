@@ -7,6 +7,7 @@ add_executable(v8pp_bench
 	bench_call.cpp
 	bench_class.cpp
 	bench_property.cpp
+	bench_property_scale.cpp
 )
 
 if(V8PP_HEADER_ONLY)

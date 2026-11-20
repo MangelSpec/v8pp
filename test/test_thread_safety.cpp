@@ -69,7 +69,7 @@ void test_concurrent_isolates()
 	{
 		try
 		{
-			v8pp::context context;
+			auto context = make_test_context();
 			v8::Isolate* isolate = context.isolate();
 			v8::HandleScope scope(isolate);
 
@@ -133,7 +133,7 @@ void test_cross_isolate_shared_ptr_sequential()
 
 	// Isolate A
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -159,7 +159,7 @@ void test_cross_isolate_shared_ptr_sequential()
 
 	// Isolate B
 	{
-		v8pp::context context;
+		auto context = make_test_context();
 		v8::Isolate* isolate = context.isolate();
 		v8::HandleScope scope(isolate);
 
@@ -205,7 +205,7 @@ void test_cross_isolate_shared_ptr_concurrent()
 			// Each thread gets its own copy of the shared_ptr
 			auto local_copy = shared;
 
-			v8pp::context context;
+			auto context = make_test_context();
 			v8::Isolate* isolate = context.isolate();
 			v8::HandleScope scope(isolate);
 
@@ -279,7 +279,7 @@ void test_isolate_independence()
 	{
 		try
 		{
-			v8pp::context context;
+			auto context = make_test_context();
 			v8::Isolate* isolate = context.isolate();
 			v8::HandleScope scope(isolate);
 
@@ -299,7 +299,7 @@ void test_isolate_independence()
 	{
 		try
 		{
-			v8pp::context context;
+			auto context = make_test_context();
 			v8::Isolate* isolate = context.isolate();
 			v8::HandleScope scope(isolate);
 

@@ -30,17 +30,18 @@ Tested on:
 **Crash safety**
 - Null checks on all `unwrap_object` results in property/member accessors
 - Prototype chain depth limit (16) in `unwrap_object` prevents infinite loops
-- Magic number validation (`0xC1A5517F`) on object registry before `static_cast`
+- Receiver authentication against a live native registration before accessing the C++ object
 - Use-after-free protection in `context::require()` via weak pointer pattern
 - `try_from_v8<T>` — exception-free conversion returning `std::optional`
 - Script-reachable `ToLocalChecked` paths replaced with `ToLocal` + proper error handling
 - `FromJust` → `FromMaybe` on script-reachable paths
-- Member pointer bitcast exclusion (prevents V8 debug assertion crash)
+- Revocation of retained constructors, accessors and functions when their class or binding generation is removed
 
 **New binding features**
 - Function overloading with `v8pp::overload()`
 - Default parameters with `v8pp::defaults()`
-- V8 Fast API callbacks (auto-generated for compatible signatures, V8 10+)
+- `v8pp::fast_fn` registrations currently use checked callbacks for both
+  member and receiver-free bindings
 - `const_property` — evaluated once at wrap time, stored as read-only own property
 - `v8pp::promise<T>` — synchronous wrapper around `v8::Promise::Resolver`
 - Symbol protocol support (`Symbol.toStringTag`, `Symbol.toPrimitive`, `Symbol.iterator`)
@@ -58,7 +59,7 @@ Tested on:
 - `std::monostate` in `std::variant` for `null`/`undefined`
 
 **V8 API compatibility**
-- V8 12.9+: `SetNativeDataProperty` on `InstanceTemplate` (replaces removed `SetAccessor`)
+- V8 12.9+: typed property bindings use `SetAccessorProperty` for JavaScript accessor descriptors
 - V8 13.3+: `ExternalMemoryAccounter` for string conversion
 - Fixed constructor object identity (`wrap_this` uses `args.This()` instead of creating a second object)
 - All bindings registered on `js_function_template` (fixes inheritance and `super` calls)
@@ -99,8 +100,17 @@ cd build && ctest -C Release -V
 | `V8PP_HEADER_ONLY` | 0 | Header-only library mode |
 | `V8PP_ISOLATE_DATA_SLOT` | 0 | Isolate data slot for v8pp shared data |
 | `V8PP_PRETTIFY_TYPENAMES` | 1 | Prettier type names (disable for max performance) |
+| `V8PP_ENABLE_MANAGED_WRAPPERS` | OFF | Enable opt-in CppHeap registrations for the supported Windows x64 V8 build |
+| `V8PP_ENABLE_DISPATCH_DIAGNOSTICS` | OFF | Collect counters for native binding dispatch |
 | `V8_COMPRESS_POINTERS` | ON | V8 compressed pointers ABI |
 | `V8_ENABLE_SANDBOX` | OFF | V8 sandboxing |
+
+The portable wrapper backend is the default. Managed wrappers require MSVC
+on Windows x64 and the pinned V8 12.9.202.28 Release monolith with pointer
+compression enabled and the sandbox disabled. After the platform owner
+initializes cppgc, pass that platform in
+`v8pp::context::options::managed_wrapper_platform` when creating a new
+isolate. Borrowed isolates retain the wrapper backend selected by their host.
 
 ## Binding example
 

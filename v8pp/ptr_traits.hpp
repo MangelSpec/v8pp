@@ -1,6 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <utility>
+
+#include "v8pp/dispatch_diagnostics.hpp"
 
 namespace v8pp {
 
@@ -80,11 +83,25 @@ struct shared_ptr_traits
 	{
 		return pointer_type(pointer_type{}, id);
 	}
-	static pointer_type const_pointer_cast(const_pointer_type const& ptr) { return std::const_pointer_cast<void>(ptr); }
+	static pointer_type const_pointer_cast(const_pointer_type const& ptr)
+	{
+#if V8PP_ENABLE_DISPATCH_DIAGNOSTICS
+		if (ptr.use_count()) detail::count_dispatch(&detail::dispatch_counts::shared_owner_copies);
+#endif
+		return std::const_pointer_cast<void>(ptr);
+	}
 	template<typename T, typename U>
 	static std::shared_ptr<T> static_pointer_cast(std::shared_ptr<U> const& ptr)
 	{
+#if V8PP_ENABLE_DISPATCH_DIAGNOSTICS
+		if (ptr.use_count()) detail::count_dispatch(&detail::dispatch_counts::shared_owner_copies);
+#endif
 		return std::static_pointer_cast<T>(ptr);
+	}
+	template<typename T, typename U>
+	static std::shared_ptr<T> static_pointer_cast(std::shared_ptr<U>&& ptr) noexcept
+	{
+		return std::static_pointer_cast<T>(std::move(ptr));
 	}
 
 	template<typename T>

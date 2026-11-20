@@ -32,7 +32,7 @@ void test_wrapped_overload_selection()
 	struct B
 	{
 	};
-	v8pp::context context;
+	auto context = make_test_context();
 	auto* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 	v8pp::class_<A, Traits> a(isolate);
@@ -53,7 +53,7 @@ void test_overload()
 {
 	test_wrapped_overload_selection<v8pp::raw_ptr_traits>();
 	test_wrapped_overload_selection<v8pp::shared_ptr_traits>();
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -208,4 +208,17 @@ void test_overload()
 		} catch (e) { return e === original; } return false; })()
 	)"));
 	check_eq("JavaScript conversion exception prevents fallback", fallback_calls, 0);
+
+	auto capture = std::make_shared<int>(23);
+	std::weak_ptr<int> weak = capture;
+	context.function("retainedOverload",
+		[capture](int add) { return *capture + add; }, [](std::string value) { return value; });
+	capture.reset();
+	check_eq("overload alias works before reset",
+		run_script<int>(context, "var saved = retainedOverload; saved(2)"), 25);
+	v8pp::cleanup(isolate);
+	check("overload payload releases despite retained alias", weak.expired());
+	check("retained overload rejects after reset", run_script<bool>(context, R"(
+		try { saved(2); false; } catch (e) { e.message.includes("retired"); }
+	)"));
 }

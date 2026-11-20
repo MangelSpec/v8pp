@@ -22,6 +22,9 @@
 #include "v8pp/utility.hpp"
 #include "v8pp/type_info.hpp"
 
+v8pp::context make_test_context();
+v8::Platform* managed_test_platform();
+
 template<typename Sequence>
 std::ostream& print_sequence(std::ostream& os, Sequence const& sequence, char const brackets[2]);
 

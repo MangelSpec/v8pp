@@ -3,12 +3,18 @@
 #include <string>
 #include <map>
 #include <cstdint>
+#include <memory>
 
 #include <v8.h>
 
 #include "v8pp/convert.hpp"
 #include "v8pp/function.hpp"
+#include "v8pp/managed_wrappers.hpp"
 #include "v8pp/overload.hpp"
+
+namespace v8 {
+class CppHeap;
+}
 
 namespace v8pp {
 
@@ -21,7 +27,34 @@ class class_;
 class context
 {
 public:
+	/// Create a portable isolate. The caller owns the allocator and the isolate.
+	/// With a null allocator, retrieve the new allocator with GetArrayBufferAllocator().
+	/// Call dispose_bindings in a live context before disposing the isolate.
 	static v8::Isolate* create_isolate(v8::ArrayBuffer::Allocator* allocator = nullptr);
+
+	struct managed_isolate_deleter
+	{
+		void operator()(v8::Isolate* isolate) const noexcept;
+
+	private:
+		friend class context;
+		v8::CppHeap* heap_ = nullptr;
+	};
+	using owned_managed_isolate = std::unique_ptr<v8::Isolate, managed_isolate_deleter>;
+
+	/// Explicitly reserve v8pp's wrapper tag and slot on a new isolate.
+	/// The V8 platform owner must initialize cppgc before creation and shut it
+	/// down after all managed isolates are destroyed. A supplied allocator is
+	/// borrowed. The default allocator and managed heap belong to the result.
+	/// Call dispose_bindings while a context is still usable, retain its result
+	/// through isolate disposal, and leave all V8 scopes before destroying this owner.
+	static owned_managed_isolate create_isolate(v8::Platform& platform,
+		v8::ArrayBuffer::Allocator* allocator = nullptr);
+
+	static bool has_managed_wrappers(v8::Isolate* isolate) noexcept
+	{
+		return detail::has_managed_wrappers(isolate);
+	}
 
 	struct options
 	{
@@ -30,6 +63,8 @@ public:
 		v8::Local<v8::ObjectTemplate> global = {};
 		bool add_default_global_methods = true;
 		bool enter_context = true;
+		/// Opt in for a new isolate. A supplied isolate keeps its existing mode.
+		v8::Platform* managed_wrapper_platform = nullptr;
 	};
 
 	/// Create context with optional existing v8::Isolate
@@ -38,18 +73,15 @@ public:
 	/// and enter the created v8 context
 	/// Bindings are shared by contexts and context stores on an isolate and are
 	/// cleaned up when the last such owner is destroyed.
-	/// Release host persistent handles to native callbacks and wrapped objects
-	/// before destroying that last owner.
+	/// A borrowed isolate's host calls dispose_bindings in a live context at final
+	/// teardown and keeps the returned plugin handles through isolate disposal.
 	explicit context(v8::Isolate* isolate = nullptr,
 		v8::ArrayBuffer::Allocator* allocator = nullptr,
 		bool add_default_global_methods = true,
 		bool enter_context = true,
 		v8::Local<v8::ObjectTemplate> global = {});
 
-	explicit context(options const& opts)
-		: context(opts.isolate, opts.allocator, opts.add_default_global_methods, opts.enter_context, opts.global)
-	{
-	}
+	explicit context(options const& opts);
 
 	context(context const&) = delete;
 	context& operator=(context const&) = delete;
@@ -62,7 +94,7 @@ public:
 	/// V8 isolate associated with this context
 	v8::Isolate* isolate() const { return isolate_; }
 
-	/// V8 context implementation
+	/// V8 context implementation. Requires an active HandleScope on its isolate.
 	v8::Local<v8::Context> impl() const { return to_local(isolate_, impl_); }
 
 	/// Global object in this context
@@ -134,6 +166,7 @@ private:
 
 	bool own_isolate_;
 	bool enter_context_;
+	owned_managed_isolate managed_isolate_;
 	v8::Isolate* isolate_;
 	v8::Global<v8::Context> impl_;
 	std::unique_ptr<v8::ArrayBuffer::Allocator> array_buffer_allocator_;

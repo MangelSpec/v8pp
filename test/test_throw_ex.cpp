@@ -22,7 +22,7 @@ void test(v8pp::context& context, std::string type, v8pp::exception_ctor ctor, v
 
 void test_throw_ex()
 {
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 
 	test(context, "Error", v8::Exception::Error);

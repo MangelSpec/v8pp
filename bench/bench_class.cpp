@@ -35,7 +35,7 @@ struct Derived : Base
 
 void bench_class()
 {
-    v8pp::context context;
+    auto context = v8pp::bench::make_context();
     v8::Isolate* isolate = context.isolate();
     v8::HandleScope scope(isolate);
 

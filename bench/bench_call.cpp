@@ -17,7 +17,7 @@ double compute(double a, double b, double c) { return a * b + c; }
 
 void bench_call()
 {
-    v8pp::context context;
+    auto context = v8pp::bench::make_context();
     v8::Isolate* isolate = context.isolate();
     v8::HandleScope scope(isolate);
 

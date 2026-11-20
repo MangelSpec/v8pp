@@ -59,7 +59,7 @@ static_assert(!v8pp::detail::is_fast_arg_type_v<v8::Isolate*>);
 
 void test_fast_api()
 {
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -230,4 +230,51 @@ void test_fast_api()
 			run_script<int>(context, "mmod.mixed = 33; mmod.mixed"), 33);
 		check_eq("fast_api: module mixed property updated C++ side", mixed_val, 33);
 	}
+
+	struct FirstBase
+	{
+		int32_t unrelated = 900;
+	};
+	struct SecondBase
+	{
+		int32_t value = 3;
+		int32_t read() const { return value; }
+		int32_t add(int32_t delta) { value += delta; return value; }
+	};
+	struct BothBases : FirstBase, SecondBase {};
+	BothBases probe;
+	check("secondary base requires address adjustment",
+		static_cast<void*>(&probe) != static_cast<void*>(static_cast<SecondBase*>(&probe)));
+
+	v8pp::class_<SecondBase> second(isolate);
+	second.function("read", v8pp::fast_fn<&SecondBase::read>)
+		.function("add", v8pp::fast_fn<&SecondBase::add>)
+		.property("fastValue", v8pp::fast_fn<&SecondBase::read>);
+	v8pp::class_<BothBases> both(isolate);
+	both.ctor<>().inherit<SecondBase>();
+	context.class_("BothBases", both);
+	check_eq("fast-tagged operations address the secondary base", run_script<int>(context, R"(
+		var receiver = new BothBases();
+		receiver.add(8) + receiver.read() + receiver.fastValue
+	)"), 33);
+	run_script<int>(context, "for (let i = 0; i < 10000; ++i) receiver.add(0); receiver.read()");
+#if V8PP_ENABLE_DISPATCH_DIAGNOSTICS
+	v8pp::detail::reset_dispatch_counts();
+#endif
+	check_eq("warmed fast-tagged operations preserve receiver", run_script<int>(context, R"(
+		var total = 0;
+		for (let i = 0; i < 10000; ++i) total += receiver.add(0) + receiver.read() + receiver.fastValue;
+		total
+	)"), 330000);
+#if V8PP_ENABLE_DISPATCH_DIAGNOSTICS
+	auto counts = v8pp::detail::read_dispatch_counts();
+	check_eq("fast-tagged members used checked dispatch", counts.checked_member_entries, 30000u);
+	check_eq("no unchecked optimized dispatch ran", counts.optimized_member_entries, 0u);
+#endif
+	check_eq("fast-tagged module alias works before reset",
+		run_script<int>(context, "var savedFast = fast_add; savedFast(2, 4)"), 6);
+	v8pp::cleanup(isolate);
+	check("fast-tagged function alias is revoked", run_script<bool>(context, R"(
+		try { savedFast(2, 4); false; } catch (e) { e.message.includes("retired"); }
+	)"));
 }

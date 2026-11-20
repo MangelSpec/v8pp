@@ -6,11 +6,17 @@
 #include "v8pp/class.hpp"
 #include "v8pp/throw_ex.hpp"
 
+#include <cstdio>
+#include <exception>
 #include <fstream>
 #include <mutex>
 #include <atomic>
 #include <unordered_map>
 #include <utility>
+
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+#include <v8-cppgc.h>
+#endif
 
 #if defined(_WIN32)
 #define VC_EXTRALEAN
@@ -23,6 +29,16 @@ static char const path_sep = '/';
 #endif
 
 namespace v8pp {
+
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+static char managed_wrapper_isolate;
+
+bool detail::has_managed_wrappers(v8::Isolate* isolate) noexcept
+{
+	// An external isolate can have an attached heap with an independent tag space.
+	return isolate && isolate->GetData(V8PP_MANAGED_WRAPPERS_DATA_SLOT) == &managed_wrapper_isolate;
+}
+#endif
 
 static std::mutex& callback_contexts_mutex()
 {
@@ -171,65 +187,151 @@ void context::run_file(v8::FunctionCallbackInfo<v8::Value> const& args)
 
 v8::Isolate* context::create_isolate(v8::ArrayBuffer::Allocator* allocator)
 {
-	v8::Isolate::CreateParams create_params;
-	create_params.array_buffer_allocator = allocator ? allocator : v8::ArrayBuffer::Allocator::NewDefaultAllocator();
+	std::unique_ptr<v8::ArrayBuffer::Allocator> default_allocator;
+	if (!allocator)
+	{
+		default_allocator.reset(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
+		allocator = default_allocator.get();
+	}
 
-	return v8::Isolate::New(create_params);
+	v8::Isolate::CreateParams create_params;
+	create_params.array_buffer_allocator = allocator;
+
+	v8::Isolate* isolate = v8::Isolate::New(create_params);
+	if (isolate) default_allocator.release();
+	return isolate;
+}
+
+context::owned_managed_isolate context::create_isolate(v8::Platform& platform,
+	v8::ArrayBuffer::Allocator* allocator)
+{
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+	v8::Isolate::CreateParams create_params;
+	if (allocator)
+	{
+		create_params.array_buffer_allocator = allocator;
+	}
+	else
+	{
+		create_params.array_buffer_allocator_shared.reset(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
+	}
+
+	auto heap = v8::CppHeap::Create(&platform, v8::CppHeapCreateParams({}));
+	owned_managed_isolate isolate(v8::Isolate::New(create_params));
+	if (!isolate) throw std::runtime_error("could not create V8 isolate");
+	{
+		v8::Isolate::Scope scope(isolate.get());
+		// The pinned V8's CreateParams ownership path terminates the heap but
+		// leaves its allocation behind. Retain ownership via AttachCppHeap.
+		isolate->AttachCppHeap(heap.get());
+		isolate->SetData(V8PP_MANAGED_WRAPPERS_DATA_SLOT, &managed_wrapper_isolate);
+		isolate.get_deleter().heap_ = heap.release();
+	}
+	return isolate;
+#else
+	(void)platform;
+	(void)allocator;
+	throw std::logic_error("managed V8 wrappers are disabled in this build");
+#endif
+}
+
+void context::managed_isolate_deleter::operator()(v8::Isolate* isolate) const noexcept
+{
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+	std::unique_ptr<v8::CppHeap> heap(heap_);
+	if (heap)
+	{
+		v8::Locker lock(isolate);
+		v8::Isolate::Scope scope(isolate);
+		isolate->DetachCppHeap();
+		isolate->SetData(V8PP_MANAGED_WRAPPERS_DATA_SLOT, nullptr);
+		heap->Terminate();
+	}
+#endif
+	isolate->Dispose();
 }
 
 context::context(v8::Isolate* isolate, v8::ArrayBuffer::Allocator* allocator,
 	bool add_default_global_methods, bool enter_context,
 	v8::Local<v8::ObjectTemplate> global)
-	: own_isolate_(isolate == nullptr)
-	, enter_context_(enter_context)
-	, isolate_(isolate ? isolate : create_isolate(allocator))
+	: context(options{isolate, allocator, global, add_default_global_methods, enter_context})
+{
+}
+
+context::context(options const& opts)
+	: own_isolate_(opts.isolate == nullptr)
+	, enter_context_(opts.enter_context)
+	, managed_isolate_(own_isolate_ && opts.managed_wrapper_platform
+		? create_isolate(*opts.managed_wrapper_platform, opts.allocator) : owned_managed_isolate{})
+	, isolate_(opts.isolate ? opts.isolate : managed_isolate_ ? managed_isolate_.get() : create_isolate(opts.allocator))
 {
 	if (own_isolate_)
 	{
+		if (!isolate_) throw std::runtime_error("could not create V8 isolate");
 		isolate_->Enter();
-		if (!allocator)
+		if (!opts.allocator && !managed_isolate_)
 		{
 			// take ownership over the new allocator created in create_isolate()
 			array_buffer_allocator_.reset(isolate_->GetArrayBufferAllocator());
 		}
 	}
 
-	v8::HandleScope scope(isolate_);
-
-	if (global.IsEmpty())
+	try
 	{
-		global = v8::ObjectTemplate::New(isolate_);
+		v8::HandleScope scope(isolate_);
+		auto global = opts.global;
+		if (global.IsEmpty())
+		{
+			global = v8::ObjectTemplate::New(isolate_);
+		}
+
+		if (opts.add_default_global_methods)
+		{
+			static std::atomic<uint64_t> next_callback_id{ 1 };
+			callback_id_ = next_callback_id.fetch_add(1, std::memory_order_relaxed);
+			v8::Local<v8::Value> data = v8::BigInt::NewFromUnsigned(isolate_, callback_id_);
+			global->Set(isolate_, "require",
+				v8::FunctionTemplate::New(isolate_, context::load_module, data));
+			global->Set(isolate_, "run",
+				v8::FunctionTemplate::New(isolate_, context::run_file, data));
+		}
+
+		v8::Local<v8::Context> impl = v8::Context::New(isolate_, nullptr, global);
+		if (impl.IsEmpty()) throw std::runtime_error("could not create V8 context");
+		if (callback_id_)
+		{
+			std::lock_guard lock(callback_contexts_mutex());
+			callback_contexts().emplace(callback_id_, this);
+		}
+
+		detail::external_data::add_owner(isolate_);
+		impl_.Reset(isolate_, impl);
+		if (enter_context_)
+		{
+			impl->Enter();
+		}
 	}
-
-	if (add_default_global_methods)
+	catch (...)
 	{
-		static std::atomic<uint64_t> next_callback_id{ 1 };
-		callback_id_ = next_callback_id.fetch_add(1, std::memory_order_relaxed);
-		v8::Local<v8::Value> data = v8::BigInt::NewFromUnsigned(isolate_, callback_id_);
-		global->Set(isolate_, "require",
-			v8::FunctionTemplate::New(isolate_, context::load_module, data));
-		global->Set(isolate_, "run",
-			v8::FunctionTemplate::New(isolate_, context::run_file, data));
-	}
-
-	v8::Local<v8::Context> impl = v8::Context::New(isolate_, nullptr, global);
-	if (enter_context_)
-	{
-		impl->Enter();
-	}
-	impl_.Reset(isolate_, impl);
-	detail::external_data::add_owner(isolate_);
-
-	if (callback_id_)
-	{
-		std::lock_guard lock(callback_contexts_mutex());
-		callback_contexts().emplace(callback_id_, this);
+		if (callback_id_)
+		{
+			std::lock_guard lock(callback_contexts_mutex());
+			callback_contexts().erase(callback_id_);
+		}
+		if (own_isolate_)
+		{
+			isolate_->Exit();
+			if (managed_isolate_) managed_isolate_.reset();
+			else isolate_->Dispose();
+		}
+		throw;
 	}
 }
 
 context::context(context&& src) noexcept
 	: own_isolate_(std::exchange(src.own_isolate_, false))
 	, enter_context_(std::exchange(src.enter_context_, false))
+	, managed_isolate_(std::move(src.managed_isolate_))
 	, isolate_(std::exchange(src.isolate_, nullptr))
 	, impl_(std::move(src.impl_))
 	, array_buffer_allocator_(std::move(src.array_buffer_allocator_))
@@ -252,6 +354,7 @@ context& context::operator=(context&& src) noexcept
 
 		own_isolate_ = std::exchange(src.own_isolate_, false);
 		enter_context_ = std::exchange(src.enter_context_, false);
+		managed_isolate_ = std::move(src.managed_isolate_);
 		isolate_ = std::exchange(src.isolate_, nullptr);
 		array_buffer_allocator_ = std::move(src.array_buffer_allocator_);
 		callback_id_ = std::exchange(src.callback_id_, 0);
@@ -288,8 +391,18 @@ void context::destroy()
 	}
 
 	bool const last_owner = detail::external_data::remove_owner(isolate_);
-	if (own_isolate_ || last_owner)
+	std::vector<std::shared_ptr<void>> plugin_images;
+	std::exception_ptr cleanup_error;
+	if (own_isolate_)
 	{
+		v8::HandleScope handles(isolate_);
+		v8::Context::Scope scope(impl());
+		plugin_images = dispose_bindings(isolate_, &cleanup_error);
+	}
+	else if (last_owner)
+	{
+		v8::HandleScope handles(isolate_);
+		v8::Context::Scope scope(impl());
 		cleanup(isolate_);
 	}
 
@@ -302,6 +415,7 @@ void context::destroy()
 
 	if (enter_context_)
 	{
+		v8::HandleScope handles(isolate_);
 		to_local(isolate_, impl_)->Exit();
 	}
 	impl_.Reset();
@@ -309,10 +423,26 @@ void context::destroy()
 	if (own_isolate_)
 	{
 		isolate_->Exit();
-		isolate_->Dispose();
+		if (managed_isolate_) managed_isolate_.reset();
+		else isolate_->Dispose();
 	}
 	isolate_ = nullptr;
 	array_buffer_allocator_.reset();
+	if (cleanup_error)
+	{
+		try
+		{
+			std::rethrow_exception(cleanup_error);
+		}
+		catch (std::exception const& error)
+		{
+			std::fprintf(stderr, "Native wrapper destruction failed: %s\n", error.what());
+		}
+		catch (...)
+		{
+			std::fputs("Native wrapper destruction failed\n", stderr);
+		}
+	}
 }
 
 context& context::value(std::string_view name, v8::Local<v8::Value> value)

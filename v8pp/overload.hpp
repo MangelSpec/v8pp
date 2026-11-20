@@ -146,7 +146,8 @@ bool overload_types_match(v8::Isolate* isolate, v8::FunctionCallbackInfo<v8::Val
 /// Try to invoke one overload entry (no defaults). Returns true on success.
 template<typename Traits, typename F>
 bool try_invoke_entry(overload_entry<F, void>& entry,
-	v8::FunctionCallbackInfo<v8::Value> const& args)
+	v8::FunctionCallbackInfo<v8::Value> const& args, v8::TryCatch& caught,
+	external_data::pin const& callback)
 {
 	using FTraits = function_traits<F>;
 	v8::Isolate* isolate = args.GetIsolate();
@@ -168,8 +169,12 @@ bool try_invoke_entry(overload_entry<F, void>& entry,
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
-			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits, true>(std::move(func), args, *obj)));
+			decltype(auto) result = call_from_v8<Traits, true>(std::move(func), args, *obj);
+			if (!caught.HasCaught())
+			{
+				external_data::result_scope conversion(callback);
+				args.GetReturnValue().Set(converter::to_v8(isolate, std::forward<decltype(result)>(result)));
+			}
 		}
 	}
 	else
@@ -182,8 +187,12 @@ bool try_invoke_entry(overload_entry<F, void>& entry,
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
-			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits, true>(std::move(func), args)));
+			decltype(auto) result = call_from_v8<Traits, true>(std::move(func), args);
+			if (!caught.HasCaught())
+			{
+				external_data::result_scope conversion(callback);
+				args.GetReturnValue().Set(converter::to_v8(isolate, std::forward<decltype(result)>(result)));
+			}
 		}
 	}
 	return true;
@@ -192,7 +201,8 @@ bool try_invoke_entry(overload_entry<F, void>& entry,
 /// Try to invoke one overload entry (with defaults). Returns true on success.
 template<typename Traits, typename F, typename... Defs>
 bool try_invoke_entry(overload_entry<F, defaults<Defs...>>& entry,
-	v8::FunctionCallbackInfo<v8::Value> const& args)
+	v8::FunctionCallbackInfo<v8::Value> const& args, v8::TryCatch& caught,
+	external_data::pin const& callback)
 {
 	using FTraits = function_traits<F>;
 	v8::Isolate* isolate = args.GetIsolate();
@@ -212,8 +222,12 @@ bool try_invoke_entry(overload_entry<F, defaults<Defs...>>& entry,
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
-			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits, true>(std::move(func), args, entry.defs, *obj)));
+			decltype(auto) result = call_from_v8<Traits, true>(std::move(func), args, entry.defs, *obj);
+			if (!caught.HasCaught())
+			{
+				external_data::result_scope conversion(callback);
+				args.GetReturnValue().Set(converter::to_v8(isolate, std::forward<decltype(result)>(result)));
+			}
 		}
 	}
 	else
@@ -226,8 +240,12 @@ bool try_invoke_entry(overload_entry<F, defaults<Defs...>>& entry,
 		{
 			using return_type = typename FTraits::return_type;
 			using converter = typename call_from_v8_traits<F>::template arg_converter<return_type, Traits>;
-			args.GetReturnValue().Set(converter::to_v8(isolate,
-				call_from_v8<Traits, true>(std::move(func), args, entry.defs)));
+			decltype(auto) result = call_from_v8<Traits, true>(std::move(func), args, entry.defs);
+			if (!caught.HasCaught())
+			{
+				external_data::result_scope conversion(callback);
+				args.GetReturnValue().Set(converter::to_v8(isolate, std::forward<decltype(result)>(result)));
+			}
 		}
 	}
 	return true;
@@ -282,7 +300,9 @@ void forward_overloaded_function(v8::FunctionCallbackInfo<v8::Value> const& args
 	v8::TryCatch try_catch(isolate);
 	try
 	{
-		auto& set = external_data::get<OverloadSet>(args.Data());
+		native_dispatch_scope dispatch(isolate);
+		external_data::pin callback(args.Data());
+		auto& set = callback.get<OverloadSet>();
 		size_t const arg_count = args.Length();
 
 		bool matched = false;
@@ -309,7 +329,7 @@ void forward_overloaded_function(v8::FunctionCallbackInfo<v8::Value> const& args
 			// Try invoking
 			try
 			{
-				matched = try_invoke_entry<Traits>(entries, args);
+				matched = try_invoke_entry<Traits>(entries, args, try_catch, callback);
 				return matched;
 			}
 			catch (argument_conversion_error const& ex)
@@ -352,6 +372,19 @@ auto make_overload_entry(F&& func)
 	}
 }
 
+template<typename Traits, typename... Funcs>
+v8::Local<v8::FunctionTemplate> wrap_class_overload_template(v8::Isolate* isolate, external_data::group* owner, Funcs&&... funcs)
+{
+	using Set = overload_set<decltype(make_overload_entry(std::forward<Funcs>(funcs)))...>;
+	Set set{ std::make_tuple(make_overload_entry(std::forward<Funcs>(funcs))...) };
+	return v8::FunctionTemplate::New(isolate,
+		&forward_overloaded_function<Traits, Set>,
+		external_data::set(isolate, std::move(set), owner),
+		v8::Local<v8::Signature>(), 0,
+		v8::ConstructorBehavior::kAllow,
+		v8::SideEffectType::kHasSideEffect);
+}
+
 } // namespace v8pp::detail
 
 namespace v8pp {
@@ -360,14 +393,7 @@ namespace v8pp {
 template<typename Traits = raw_ptr_traits, typename... Funcs>
 v8::Local<v8::FunctionTemplate> wrap_overload_template(v8::Isolate* isolate, Funcs&&... funcs)
 {
-	using Set = detail::overload_set<decltype(detail::make_overload_entry(std::forward<Funcs>(funcs)))...>;
-	Set set{ std::make_tuple(detail::make_overload_entry(std::forward<Funcs>(funcs))...) };
-	return v8::FunctionTemplate::New(isolate,
-		&detail::forward_overloaded_function<Traits, Set>,
-		detail::external_data::set(isolate, std::move(set)),
-		v8::Local<v8::Signature>(), 0,
-		v8::ConstructorBehavior::kAllow,
-		v8::SideEffectType::kHasSideEffect);
+	return detail::wrap_class_overload_template<Traits>(isolate, nullptr, std::forward<Funcs>(funcs)...);
 }
 
 /// Wrap multiple overloaded functions into a single V8 function

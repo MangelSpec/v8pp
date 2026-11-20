@@ -170,7 +170,7 @@ void test_ptr_traits()
 	test_raw_ptr_traits();
 	test_shared_ptr_traits();
 
-	v8pp::context context;
+	auto context = make_test_context();
 
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);

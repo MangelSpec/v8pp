@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <exception>
+#include <stdexcept>
 #include <string>
 
 #include <v8.h>
@@ -12,7 +13,26 @@
 #include "v8pp/context.hpp"
 #include "v8pp/version.hpp"
 
-void run_tests(std::vector<std::string> const& selected)
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+#include <cppgc/platform.h>
+#endif
+
+static v8::Platform* wrapper_platform;
+
+v8::Platform* managed_test_platform()
+{
+	return wrapper_platform;
+}
+
+v8pp::context make_test_context()
+{
+	v8pp::context ctx(v8pp::context::options{.managed_wrapper_platform = managed_test_platform()});
+	if (ctx.has_managed_wrappers(ctx.isolate()) != (managed_test_platform() != nullptr))
+		throw std::logic_error("test isolate did not select the requested wrapper backend");
+	return ctx;
+}
+
+bool run_tests(std::vector<std::string> const& selected)
 {
 	void test_type_info();
 	void test_utility();
@@ -68,7 +88,7 @@ void run_tests(std::vector<std::string> const& selected)
 				{ return name == test.first; }))
 		{
 			std::cerr << "Unknown test group: " << name << '\n';
-			exit(EXIT_FAILURE);
+			return false;
 		}
 	}
 	for (auto const& test : tests)
@@ -83,10 +103,11 @@ void run_tests(std::vector<std::string> const& selected)
 		catch (std::exception const& ex)
 		{
 			std::cerr << " error: " << ex.what() << '\n';
-			exit(EXIT_FAILURE);
+			return false;
 		}
 		std::cout << std::endl;
 	}
+	return true;
 }
 
 int main(int argc, char const* argv[])
@@ -170,24 +191,31 @@ int main(int argc, char const* argv[])
 	v8::V8::InitializePlatform(platform.get());
 	v8::V8::Initialize();
 
-	if (do_tests || scripts.empty())
-	{
-		run_tests(selected_tests);
-	}
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+	cppgc::InitializeProcess();
+	wrapper_platform = platform.get();
+#endif
 
 	int result = EXIT_SUCCESS;
 	try
 	{
-		v8pp::context context;
-
-		if (!lib_path.empty())
+		std::cout << "Wrapper backend: " << (managed_test_platform() ? "managed" : "portable") << '\n';
+		if ((do_tests || scripts.empty()) && !run_tests(selected_tests))
 		{
-			context.set_lib_path(lib_path);
+			result = EXIT_FAILURE;
 		}
-		for (std::string const& script : scripts)
+		if (result == EXIT_SUCCESS && !scripts.empty())
 		{
-			v8::HandleScope scope(context.isolate());
-			context.run_file(script);
+			auto context = make_test_context();
+			if (!lib_path.empty())
+			{
+				context.set_lib_path(lib_path);
+			}
+			for (std::string const& script : scripts)
+			{
+				v8::HandleScope scope(context.isolate());
+				context.run_file(script);
+			}
 		}
 	}
 	catch (std::exception const& ex)
@@ -196,6 +224,10 @@ int main(int argc, char const* argv[])
 		result = EXIT_FAILURE;
 	}
 
+#if V8PP_ENABLE_MANAGED_WRAPPERS
+	wrapper_platform = nullptr;
+	cppgc::ShutdownProcess();
+#endif
 	v8::V8::Dispose();
 #if V8_MAJOR_VERSION > 9 || (V8_MAJOR_VERSION == 9 && V8_MINOR_VERSION >= 8)
 	v8::V8::DisposePlatform();

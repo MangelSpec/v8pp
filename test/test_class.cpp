@@ -12,9 +12,19 @@ struct Xbase
 {
 	char c = 'X';
 	int var = 1;
+	mutable int getter_calls = 0;
+	int setter_calls = 0;
 
-	int get() const { return var; }
-	void set(int v) { var = v; }
+	int get() const
+	{
+		++getter_calls;
+		return var;
+	}
+	void set(int v)
+	{
+		++setter_calls;
+		var = v;
+	}
 
 	int prop() const { return var; }
 	void prop(int v) { var = v; }
@@ -146,7 +156,7 @@ void test_class_()
 {
 	Y::instance_count = 0;
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -291,19 +301,34 @@ void test_class_()
 			"try { x = new X(); x.fun1.call({}, 1); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
 
-	// Crash safety: property read on non-wrapped object should throw JS error, not crash
+#if V8_MAJOR_VERSION > 12 || (V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION >= 9)
+	check("X prototype has native getter and setter descriptors", run_script<bool>(context, R"(
+		x = new X(7);
+		var readDescriptor = Object.getOwnPropertyDescriptor(X.prototype, 'rprop');
+		var writeDescriptor = Object.getOwnPropertyDescriptor(X.prototype, 'wprop');
+		!!readDescriptor && typeof readDescriptor.get === 'function' &&
+		!!writeDescriptor && typeof writeDescriptor.set === 'function';
+	)"));
+	auto counted_x = v8pp::class_<X, Traits>::unwrap_object(isolate, context.run_script("x"));
+	check("X descriptor control has a registered receiver", bool(counted_x));
+	check_eq("descriptor lookup does not call the getter", counted_x->getter_calls, 0);
+	check_eq("prototype getter called on a genuine X", run_script<int>(context, "readDescriptor.get.call(x)"), 7);
+	check("prototype setter called on a genuine X",
+		run_script<bool>(context, "writeDescriptor.set.call(x, 9) === undefined"));
+	check_eq("prototype setter writes to the native X", counted_x->var, 9);
+	check_eq("prototype getter dispatch count", counted_x->getter_calls, 1);
+	check_eq("prototype setter dispatch count", counted_x->setter_calls, 1);
+
 	check_eq("property read on non-wrapped object",
 		run_script<std::string>(context,
-			"try { var desc = Object.getOwnPropertyDescriptor(new X(), 'rprop');"
-			"desc.get.call({}); 'no error'; } catch(e) { 'caught'; }"),
+			"try { readDescriptor.get.call({}); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
 
-	// Crash safety: property write on non-wrapped object should throw JS error, not crash
 	check_eq("property write on non-wrapped object",
 		run_script<std::string>(context,
-			"try { var desc = Object.getOwnPropertyDescriptor(new X(), 'wprop');"
-			"desc.set.call({}, 42); 'no error'; } catch(e) { 'caught'; }"),
+			"try { writeDescriptor.set.call({}, 42); 'no error'; } catch(e) { 'caught'; }"),
 		"caught");
+#endif
 
 	// Crash safety: deep prototype chain beyond depth limit should not hang
 	check_eq("deep prototype chain beyond depth limit",
@@ -394,6 +419,7 @@ void test_class_()
 
 	context.isolate()->RequestGarbageCollectionForTesting(
 		v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
+	v8pp::detail::drain_native_destructions(isolate);
 
 	bool constexpr use_shared_ptr = std::same_as<Traits, v8pp::shared_ptr_traits>;
 
@@ -448,7 +474,7 @@ void test_multiple_inheritance()
 		int z() const { return x; }
 	};
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -503,7 +529,7 @@ void test_const_instance_in_module()
 		}
 	};
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -531,7 +557,7 @@ void test_auto_wrap_objects()
 		int get_x() const { return x; }
 	};
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -564,7 +590,7 @@ void test_ctor_factory_defaults()
 			: width(w), height(h), label(std::move(l)) {}
 	};
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -625,7 +651,7 @@ void test_ctor_multi_dispatch()
 			: kind(2), a(w), b(h) {}
 	};
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -690,7 +716,7 @@ void test_ctor_multi_dispatch_with_defaults()
 			: mode(m), name(std::move(n)) {}
 	};
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 
@@ -738,7 +764,7 @@ void test_failed_ctor_factory()
 			: value(value) {}
 	};
 
-	v8pp::context context;
+	auto context = make_test_context();
 	v8::Isolate* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 	using item_class = v8pp::class_<Item, Traits>;
@@ -794,7 +820,7 @@ void test_dispatch_regressions()
 		explicit Item(int value)
 			: value(value) {}
 	};
-	v8pp::context context;
+	auto context = make_test_context();
 	auto* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 	using Pointer = typename Traits::template object_pointer_type<Item>;
@@ -843,7 +869,7 @@ void test_static_isolate_property()
 	{
 		std::string text;
 	};
-	v8pp::context context;
+	auto context = make_test_context();
 	auto* isolate = context.isolate();
 	v8::HandleScope scope(isolate);
 	int value = 0;
@@ -866,6 +892,305 @@ void test_static_isolate_property()
 	)"));
 }
 
+template<typename Traits>
+void test_retired_receiver()
+{
+	struct Item
+	{
+		int reads = 0;
+		int get() { return ++reads; }
+	};
+	using Binding = v8pp::class_<Item, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<Item>;
+
+	auto native = std::make_shared<Item>();
+	Pointer ptr;
+	if constexpr (std::same_as<Traits, v8pp::raw_ptr_traits>)
+		ptr = native.get();
+	else
+		ptr = native;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+
+	Binding first(isolate);
+	first.function("get", &Item::get);
+	context.value("old", Binding::reference_external(isolate, ptr));
+	check_eq("host-created receiver reaches the native getter", run_script<int>(context, "old.get()"), 1);
+	Binding::unreference_external(isolate, ptr);
+	context.value("live", Binding::reference_external(isolate, ptr));
+	check("native address reuse does not reactivate the old wrapper", run_script<bool>(context, R"(
+		function rejectsOld() {
+			Object.setPrototypeOf(old, live);
+			try { live.get.call(old); } catch (error) { return error instanceof Error; }
+			return false;
+		}
+		rejectsOld()
+	)"));
+	check_eq("retired wrapper cannot dispatch through a live prototype", native->reads, 1);
+	check_eq("fresh registration accepts a plain delegate", run_script<int>(context, "Object.create(live).get()"), 2);
+
+	v8pp::cleanup(isolate);
+	Binding second(isolate);
+	second.function("get", &Item::get);
+	context.value("live", Binding::reference_external(isolate, ptr));
+	check("retained wrapper still stops delegation after reset", run_script<bool>(context, "rejectsOld()"));
+	check_eq("old wrapper cannot dispatch in a fresh binding generation", native->reads, 2);
+	check_eq("fresh generation still dispatches on a genuine wrapper", run_script<int>(context, "live.get()"), 3);
+}
+
+template<typename Traits>
+void test_reentrant_native_destruction()
+{
+	struct Item
+	{
+		std::function<int()> on_retire;
+		int retire() { return on_retire(); }
+		int get() const { return 7; }
+	};
+	using Binding = v8pp::class_<Item, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<Item>;
+
+	int destructions = 0;
+	bool destructor_saw_retired = false;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
+		{
+			++destructions;
+			destructor_saw_retired = run_script<bool>(context, R"(
+				(() => { try { item.get(); } catch (error) { return error instanceof Error; } return false; })()
+			)");
+			Traits::destroy(ptr); });
+	binding.function("retire", &Item::retire).function("get", &Item::get);
+	auto item = Traits::template create<Item>();
+	item->on_retire = [&]
+	{
+		Binding::destroy_object(isolate, item);
+		return destructions;
+	};
+	context.value("item", Binding::import_external(isolate, item));
+	check_eq("retirement waits for the active method", run_script<int>(context, "item.retire()"), 0);
+	check_eq("retired object's native destructor runs once", destructions, 1);
+	check("native destructor can reenter JS after retirement", destructor_saw_retired);
+}
+
+template<typename Traits>
+void test_factory_retirement()
+{
+	struct Item
+	{
+	};
+	using Binding = v8pp::class_<Item, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<Item>;
+
+	int destructions = 0;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	for (bool already_registered : { false, true })
+	{
+		Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
+			{
+				++destructions;
+				Traits::destroy(ptr); });
+		binding.ctor([&](v8::FunctionCallbackInfo<v8::Value> const&)
+			{
+				auto item = Traits::template create<Item>();
+				if (already_registered) Binding::import_external(isolate, item);
+				Binding::destroy(isolate);
+				return item; });
+		context.class_("RetiredFactory", binding);
+		check("factory for a retired class fails with a JS error", run_script<bool>(context, R"(
+			(() => { try { new RetiredFactory(); } catch (error) { return error instanceof Error; } return false; })()
+		)"));
+		check_eq("the retired factory releases its native result once", destructions, already_registered ? 2 : 1);
+	}
+}
+
+template<typename Traits>
+void test_failed_host_wrapper_setup()
+{
+	struct Item
+	{
+		explicit Item(int& instances) : instances(instances) { ++instances; }
+		Item(Item const& other) : Item(other.instances) {}
+		~Item() { --instances; }
+		int constant() const { throw std::runtime_error("constant unavailable"); }
+		int& instances;
+	};
+	using Binding = v8pp::class_<Item, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<Item>;
+
+	int instances = 0;
+	int releases = 0;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
+		{
+			++releases;
+			Traits::destroy(ptr); });
+	binding.const_property("constant", &Item::constant).auto_wrap_objects();
+	check_ex<std::runtime_error>("failed wrapping of a new host object", [&]
+		{ Binding::create_object(isolate, instances); });
+	check_eq("host creation rollback releases the native object", instances, 0);
+	check_eq("host creation rollback calls its destructor once", releases, 1);
+
+	Item source(instances);
+	check_ex<std::runtime_error>("failed wrapping of an automatic clone", [&]
+		{ Binding::find_object(isolate, source); });
+	check_eq("automatic wrapping rollback releases the clone", instances, 1);
+	check_eq("automatic wrapping rollback calls its destructor once", releases, 2);
+
+	auto imported = Traits::template create<Item>(instances);
+	check_ex<std::runtime_error>("failed import does not transfer ownership", [&]
+		{ Binding::import_external(isolate, imported); });
+	check_eq("failed import left the caller's native object alive", instances, 2);
+	check_eq("failed import did not run the binding destructor", releases, 2);
+	Traits::destroy(imported);
+}
+
+template<typename Traits>
+void test_factory_pending_js_exception()
+{
+	struct Item
+	{
+		explicit Item(int& publications) : publications(publications) {}
+		int& publications;
+		int constant() { return ++publications; }
+	};
+	using Binding = v8pp::class_<Item, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<Item>;
+
+	int releases = 0;
+	int publications = 0;
+	int fallbacks = 0;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	auto original = v8::Object::New(isolate);
+	context.value("factoryError", original);
+	Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
+		{
+			++releases;
+			Traits::destroy(ptr); });
+	binding.const_property("setup", &Item::constant);
+	auto throw_after_create = [&]
+	{
+		auto ptr = Traits::template create<Item>(publications);
+		isolate->ThrowException(original);
+		return ptr;
+	};
+	binding.ctor([&](v8::FunctionCallbackInfo<v8::Value> const&)
+		{ return throw_after_create(); });
+	context.class_("PendingFactory", binding);
+
+	auto const verify_error_identity = [&]
+	{
+		check("failed factory preserves the original JS exception", run_script<bool>(context, R"(
+			(() => { try { new PendingFactory(); } catch (error) { return error === factoryError; } return false; })()
+		)"));
+	};
+	verify_error_identity();
+	check_eq("ordinary factory releases an unpublished native result", releases, 1);
+
+	binding.ctor(throw_after_create, [&](v8::Local<v8::Value>)
+		{
+			++fallbacks;
+			return Traits::template create<Item>(publications); });
+	verify_error_identity();
+	check_eq("overloaded factory releases an unpublished native result", releases, 2);
+	check_eq("factory with a pending exception never starts wrapper publication", publications, 0);
+	check_eq("factory with a pending exception does not try a fallback", fallbacks, 0);
+}
+
+void test_explicit_retirement_error()
+{
+	struct Item
+	{
+		int get() const { return 4; }
+	};
+	using Binding = v8pp::class_<Item>;
+	int releases = 0;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	Binding binding(isolate, [&](v8::Isolate*, Item* const& ptr)
+		{
+			++releases;
+			delete ptr;
+			throw std::runtime_error("native release failed"); });
+	binding.function("get", &Item::get);
+	auto* first = new Item;
+	context.value("retiredItem", Binding::import_external(isolate, first));
+	check_ex<std::runtime_error>("explicit object retirement reports its destructor failure", [&]
+		{ Binding::destroy_object(isolate, first); });
+	check("explicit retirement stays effective after reporting failure", run_script<bool>(context, R"(
+		(() => { try { retiredItem.get(); } catch (error) { return error instanceof Error; } return false; })()
+	)"));
+	Binding::create_object(isolate);
+	check_ex<std::runtime_error>("explicit bulk retirement reports its destructor failure", [&]
+		{ Binding::destroy_objects(isolate); });
+	Binding::destroy_objects(isolate);
+	check_eq("explicitly retired native objects are released once", releases, 2);
+}
+
+void test_final_disposal()
+{
+	struct Item
+	{
+		int get() const { return 7; }
+	};
+	struct LateBinding
+	{
+	};
+	int destructions = 0;
+	bool rejected_class = false;
+	bool rejected_function = false;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+
+	v8pp::class_<Item> binding(isolate, [&](v8::Isolate*, Item* const& ptr)
+		{
+			++destructions;
+			delete ptr;
+			try
+			{
+				v8pp::class_<LateBinding> late(isolate);
+			}
+			catch (std::runtime_error const&)
+			{
+				rejected_class = true;
+			}
+			try
+			{
+				context.function("functionDuringDisposal", [] { return 1; });
+			}
+			catch (std::runtime_error const&)
+			{
+				rejected_function = true;
+			} });
+	binding.function("get", &Item::get);
+	context.value("finalItem", v8pp::class_<Item>::create_object(isolate));
+	context.function("attemptDispose", [isolate]
+		{ v8pp::dispose_bindings(isolate); });
+	check("active dispatch rejects final disposal", run_script<bool>(context, R"(
+		(() => { try { attemptDispose(); } catch (error) { return error instanceof Error; } return false; })()
+	)"));
+	check_eq("rejected final disposal preserves existing bindings", run_script<int>(context, "finalItem.get()"), 7);
+	check_eq("rejected final disposal preserves existing native objects", destructions, 0);
+
+	v8pp::dispose_bindings(isolate);
+	check("native destructor cannot register a class during final disposal", rejected_class);
+	check("native destructor cannot register a callable during final disposal", rejected_function);
+	check_eq("final disposal runs the destructor once", destructions, 1);
+	v8pp::dispose_bindings(isolate);
+	check_eq("repeated final disposal leaves the destructor count unchanged", destructions, 1);
+}
+
 void test_class()
 {
 	test_dispatch_regressions<v8pp::raw_ptr_traits>();
@@ -873,6 +1198,18 @@ void test_class()
 	test_static_isolate_property();
 	test_class_<v8pp::raw_ptr_traits>();
 	test_class_<v8pp::shared_ptr_traits>();
+	test_retired_receiver<v8pp::raw_ptr_traits>();
+	test_retired_receiver<v8pp::shared_ptr_traits>();
+	test_reentrant_native_destruction<v8pp::raw_ptr_traits>();
+	test_reentrant_native_destruction<v8pp::shared_ptr_traits>();
+	test_factory_retirement<v8pp::raw_ptr_traits>();
+	test_factory_retirement<v8pp::shared_ptr_traits>();
+	test_failed_host_wrapper_setup<v8pp::raw_ptr_traits>();
+	test_failed_host_wrapper_setup<v8pp::shared_ptr_traits>();
+	test_factory_pending_js_exception<v8pp::raw_ptr_traits>();
+	test_factory_pending_js_exception<v8pp::shared_ptr_traits>();
+	test_explicit_retirement_error();
+	test_final_disposal();
 
 	test_multiple_inheritance<v8pp::raw_ptr_traits>();
 	test_multiple_inheritance<v8pp::shared_ptr_traits>();

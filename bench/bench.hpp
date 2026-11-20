@@ -17,6 +17,8 @@
 
 namespace v8pp::bench {
 
+context make_context();
+
 struct result
 {
     std::string name;

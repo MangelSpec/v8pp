@@ -55,7 +55,7 @@ public:
 	/// The isolate this store belongs to
 	v8::Isolate* isolate() const { return isolate_; }
 
-	/// The internal V8 context (for advanced use)
+	/// The internal V8 context. Requires an active HandleScope on its isolate.
 	v8::Local<v8::Context> impl() const { return to_local(isolate_, store_ctx_); }
 
 	/// Store a value under the given name.
