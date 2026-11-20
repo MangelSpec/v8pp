@@ -4,6 +4,7 @@
 #include "test.hpp"
 
 #include <atomic>
+#include <functional>
 #include <string>
 
 #if V8PP_ENABLE_MANAGED_WRAPPERS
@@ -245,32 +246,17 @@ void test_pending_collection_with_explicit_destruction()
 }
 
 #if V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION == 9 && V8_BUILD_NUMBER == 202 && V8_PATCH_LEVEL == 28
-template<typename Traits>
-void test_explicit_destruction_between_weak_passes()
+struct WeakPasses
 {
-	struct WeakPasses
+	v8::Global<v8::Object>* handle = nullptr;
+	bool first = false;
+	bool second = false;
+
+	void watch(v8::Isolate* isolate, v8::Global<v8::Object>& witness, v8::Local<v8::Object> wrapper)
 	{
-		v8::Global<v8::Object>* handle;
-		bool first = false;
-		bool second = false;
-	};
-	using Binding = v8pp::class_<GCObj, Traits>;
-	using Pointer = typename Traits::template object_pointer_type<GCObj>;
-	int releases = 0;
-	WeakPasses passes{};
-	auto context = make_test_context();
-	auto* isolate = context.isolate();
-	v8::HandleScope scope(isolate);
-	v8::Global<v8::Object> witness;
-	passes.handle = &witness;
-	Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
-		{
-			++releases;
-			Traits::destroy(ptr); });
-	{
-		v8::HandleScope wrapper_scope(isolate);
-		witness.Reset(isolate, Binding::create_object(isolate, 7));
-		witness.SetWeak(&passes, [](v8::WeakCallbackInfo<WeakPasses> const& first)
+		handle = &witness;
+		handle->Reset(isolate, wrapper);
+		handle->SetWeak(this, [](v8::WeakCallbackInfo<WeakPasses> const& first)
 			{
 				auto* observed = first.GetParameter();
 				observed->handle->Reset();
@@ -279,15 +265,41 @@ void test_explicit_destruction_between_weak_passes()
 					{ second.GetParameter()->second = true; }); }, v8::WeakCallbackType::kParameter);
 	}
 
-	// Ordinary allocation can collect the wrapper without forcing the weak
-	// second pass. Stop at the first observed collection and do not pump tasks.
-	for (int allocation = 0; allocation < 4096 && !passes.first; ++allocation)
+	void reach_first_pass(v8::Isolate* isolate) const
 	{
-		v8::HandleScope garbage_scope(isolate);
-		v8::Array::New(isolate, 4096);
+		// Ordinary allocation collects the wrapper without forcing the weak
+		// second pass. Stop at the first observed collection without pumping tasks.
+		for (int allocation = 0; allocation < 4096 && !first; ++allocation)
+		{
+			v8::HandleScope garbage_scope(isolate);
+			v8::Array::New(isolate, 4096);
+		}
+		check("ordinary GC reached the first weak pass", first);
+		check("the weak second pass is still pending at the owner boundary", !second);
 	}
-	check("ordinary GC reached the first weak pass", passes.first);
-	check("the weak second pass is still pending at the owner boundary", !passes.second);
+};
+
+template<typename Traits>
+void test_explicit_destruction_between_weak_passes()
+{
+	using Binding = v8pp::class_<GCObj, Traits>;
+	using Pointer = typename Traits::template object_pointer_type<GCObj>;
+	int releases = 0;
+	WeakPasses passes;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	v8::Global<v8::Object> witness;
+	Binding binding(isolate, [&](v8::Isolate*, Pointer const& ptr)
+		{
+			++releases;
+			Traits::destroy(ptr); });
+	{
+		v8::HandleScope wrapper_scope(isolate);
+		passes.watch(isolate, witness, Binding::create_object(isolate, 7));
+	}
+
+	passes.reach_first_pass(isolate);
 	check_eq("first-pass collection leaves native destruction to the owner", releases, 0);
 
 	Binding::destroy_objects(isolate);
@@ -296,6 +308,131 @@ void test_explicit_destruction_between_weak_passes()
 	force_gc(isolate);
 	check("the queued weak second pass was processed", passes.second);
 	check_eq("the late weak callback does not repeat native destruction", releases, 1);
+}
+
+void test_shared_reimport_between_weak_passes(bool initially_imported)
+{
+	using Traits = v8pp::shared_ptr_traits;
+	using Binding = v8pp::class_<GCObj, Traits>;
+	int releases = 0;
+	WeakPasses passes;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	v8::Global<v8::Object> witness;
+	Binding binding(isolate, [&](v8::Isolate*, std::shared_ptr<GCObj> const&)
+		{ ++releases; });
+	auto native = Traits::create<GCObj>(7);
+	std::weak_ptr<GCObj> lifetime = native;
+	{
+		v8::HandleScope wrapper_scope(isolate);
+		auto wrapper = initially_imported ? Binding::import_external(isolate, native)
+			: Binding::reference_external(isolate, native);
+		passes.watch(isolate, witness, wrapper);
+		check_ex<std::runtime_error>("import rejects an already live wrapper", [&]
+			{ Binding::import_external(isolate, native); });
+	}
+
+	passes.reach_first_pass(isolate);
+	check("first-pass collection has cleared the previous wrapper", Binding::find_object(isolate, native).IsEmpty());
+	{
+		auto other_owner = std::make_shared<int>();
+		std::shared_ptr<GCObj> mismatched(other_owner, native.get());
+		check_ex<std::runtime_error>("replacement rejects a different owner at the same address", [&]
+			{ Binding::import_external(isolate, mismatched); });
+		check("owner mismatch leaves the weak second pass pending", !passes.second);
+	}
+	{
+		v8::HandleScope wrapper_scope(isolate);
+		auto replacement = Binding::import_external(isolate, native);
+		check("a pending wrapper can be replaced", !replacement.IsEmpty());
+		check("the replacement wraps the same shared object", Binding::unwrap_object(isolate, replacement) == native);
+		check("the import completed before the old second pass", !passes.second);
+		force_gc(isolate);
+		check("the old second pass ran", passes.second);
+		check("the old second pass preserved the replacement identity",
+			Binding::find_object(isolate, native) == replacement);
+		check_eq("the replacement retains responsibility for native destruction", releases, 0);
+		native.reset();
+		check("the replacement keeps the shared object alive", !lifetime.expired());
+	}
+
+	force_gc(isolate);
+	check_eq("retiring the replacement invokes its native destruction once", releases, 1);
+	check("the shared owner is released", lifetime.expired());
+}
+
+void test_shared_reimport_with_second_pass_during_preparation(bool throw_from_constant)
+{
+	struct Item
+	{
+		std::function<int()> read;
+		int constant() const { return read(); }
+	};
+	using Binding = v8pp::class_<Item, v8pp::shared_ptr_traits>;
+	int releases = 0;
+	bool collect_during_read = false;
+	WeakPasses passes;
+	auto context = make_test_context();
+	auto* isolate = context.isolate();
+	v8::HandleScope scope(isolate);
+	v8::Global<v8::Object> witness;
+	Binding binding(isolate, [&](v8::Isolate*, std::shared_ptr<Item> const&)
+		{ ++releases; });
+	binding.const_property("constant", &Item::constant);
+	auto native = std::make_shared<Item>(Item{ [&]
+		{
+			if (collect_during_read)
+			{
+				force_gc(isolate, false);
+				if (throw_from_constant) throw std::runtime_error("constant unavailable during replacement");
+			}
+			return 42;
+		} });
+	std::weak_ptr<Item> lifetime = native;
+	{
+		v8::HandleScope wrapper_scope(isolate);
+		passes.watch(isolate, witness, Binding::import_external(isolate, native));
+	}
+
+	passes.reach_first_pass(isolate);
+	collect_during_read = true;
+	if (throw_from_constant)
+	{
+		std::string error;
+		try
+		{
+			Binding::import_external(isolate, native);
+		}
+		catch (std::runtime_error const& thrown)
+		{
+			error = thrown.what();
+		}
+		check_eq("failed replacement retains the original setup error", error,
+			std::string("constant unavailable during replacement"));
+		check("old second pass ran during failed preparation", passes.second);
+		check("failed preparation did not publish a wrapper", Binding::find_object(isolate, native).IsEmpty());
+		force_gc(isolate);
+		check_eq("rollback retires only the old import", releases, 1);
+		check("rollback leaves the caller's owner alive", !lifetime.expired());
+		native.reset();
+	}
+	else
+	{
+		{
+			v8::HandleScope wrapper_scope(isolate);
+			auto replacement = Binding::import_external(isolate, native);
+			check("old second pass ran during successful preparation", passes.second);
+			check("the replacement is registered", Binding::find_object(isolate, native) == replacement);
+			auto constant = replacement->Get(context.impl(), v8pp::to_v8(isolate, "constant")).ToLocalChecked();
+			check_eq("replacement exposes the prepared JavaScript constant", v8pp::from_v8<int>(isolate, constant), 42);
+			check_eq("replacement keeps the old import's destruction pending", releases, 0);
+			native.reset();
+		}
+		force_gc(isolate);
+	}
+	check_eq("the imported object was retired exactly once", releases, 1);
+	check("the native shared owner was released", lifetime.expired());
 }
 #endif
 
@@ -422,6 +559,10 @@ void test_gc_stress()
 #if V8_MAJOR_VERSION == 12 && V8_MINOR_VERSION == 9 && V8_BUILD_NUMBER == 202 && V8_PATCH_LEVEL == 28
 	test_explicit_destruction_between_weak_passes<v8pp::raw_ptr_traits>();
 	test_explicit_destruction_between_weak_passes<v8pp::shared_ptr_traits>();
+	test_shared_reimport_between_weak_passes(false);
+	test_shared_reimport_between_weak_passes(true);
+	test_shared_reimport_with_second_pass_during_preparation(false);
+	test_shared_reimport_with_second_pass_during_preparation(true);
 #endif
 #if V8PP_ENABLE_MANAGED_WRAPPERS
 	test_managed_wrapper_thread_transfer();

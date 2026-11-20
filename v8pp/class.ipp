@@ -182,7 +182,39 @@ V8PP_IMPL object_registry<Traits>::wrapped_object::wrapped_object(object_registr
 template<typename Traits>
 V8PP_IMPL void object_registry<Traits>::wrapped_object::collect()
 {
-	registry.detach_object(id);
+	// An explicit wrap in progress will publish a replacement or retire this receipt.
+	if (!replacement) registry.detach_object(id);
+}
+
+template<typename Traits>
+V8PP_IMPL object_registry<Traits>::external_replacement::external_replacement(
+	wrapped_object& receipt)
+	: registry(receipt.registry)
+	, id(receipt.id)
+{
+	receipt.replacement = this;
+}
+
+template<typename Traits>
+V8PP_IMPL void object_registry<Traits>::external_replacement::cancel() const
+{
+	if (auto* receipt = find())
+	{
+		receipt->replacement = nullptr;
+		if (!receipt->previous) registry.detach_object(id);
+	}
+}
+
+template<typename Traits>
+V8PP_IMPL typename object_registry<Traits>::wrapped_object*
+object_registry<Traits>::external_replacement::find() const
+{
+	auto const position = registry.objects_.find(id);
+	if (position == registry.objects_.end() || position->second.receipt->replacement != this)
+	{
+		return nullptr;
+	}
+	return position->second.receipt.get();
 }
 
 template<typename Traits>
@@ -385,7 +417,8 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::find_v8_object_by_id(ob
 }
 
 template<typename Traits>
-V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, size_t size)
+V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(
+	v8::Local<v8::Object> obj, pointer_type const& object, size_t size, external_replacement const* replacement)
 {
 	if (!object || obj.IsEmpty())
 	{
@@ -399,7 +432,7 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 		throw std::runtime_error("native class has been retired");
 	}
 	object_id const id = Traits::pointer_id(object);
-	if (objects_.contains(id))
+	if (replacement ? !replacement->find() : objects_.contains(id))
 	{
 		throw std::runtime_error(class_name() + " duplicate object " + pointer_str(id));
 	}
@@ -409,12 +442,14 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 	{
 		throw std::runtime_error("invalid native wrapper instance");
 	}
-	if (!apply_const_properties(obj, object) || objects_.contains(id))
+	if (!apply_const_properties(obj, object) || (replacement ? !replacement->find() : objects_.contains(id)))
 	{
 		throw std::runtime_error("native wrapper registration changed during construction");
 	}
 
 	auto wrapped = std::make_unique<wrapped_object>(*this, id, size);
+	v8::Local<v8::Object> portable_cell;
+	v8::Local<v8::External> portable_registration;
 #if V8PP_ENABLE_MANAGED_WRAPPERS
 	managed_wrapper_registration* managed_cell = nullptr;
 	if (managed_wrappers_)
@@ -430,24 +465,57 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 		wrapped->portable_registration = std::make_unique<wrapper_registration>();
 		wrapped->registration = wrapped->portable_registration.get();
 		v8::Local<v8::Context> context = isolate_->GetCurrentContext();
-		v8::Local<v8::Object> cell = state_.create_portable_cell(context);
-		if (cell.IsEmpty() ||
+		portable_cell = state_.create_portable_cell(context);
+		if (portable_cell.IsEmpty() ||
 			!obj->SetPrivate(context, wrapper_marker(isolate_), v8::True(isolate_)).FromMaybe(false) ||
-			!obj->SetPrivate(context, state_.portable_key(), cell).FromMaybe(false))
+			!obj->SetPrivate(context, state_.portable_key(), portable_cell).FromMaybe(false))
 		{
 			throw std::runtime_error("native wrapper registration failed");
 		}
-		wrapped->portable_cell.Reset(isolate_, cell);
+		wrapped->portable_cell.Reset(isolate_, portable_cell);
+		portable_registration = new_external(isolate_, wrapped->registration);
 	}
-	auto const [position, inserted] = objects_.try_emplace(id, std::move(wrapped));
-	if (!inserted)
+	if (retired)
 	{
-		throw std::runtime_error("duplicate native wrapper registration");
+		throw std::runtime_error("native wrapper registration changed during construction");
+	}
+	std::unique_ptr<wrapped_object> replaced;
+	auto position = objects_.end();
+	if (replacement)
+	{
+		position = objects_.find(id);
+		if (position == objects_.end() || position->second.receipt->replacement != replacement)
+		{
+			throw std::runtime_error("native wrapper registration changed during construction");
+		}
+		replaced = std::exchange(position->second.receipt, std::move(wrapped));
+		replaced->registration->registry = nullptr;
+		if (replaced->size)
+		{
+			replaced->size = 0;
+			size = 0; // The replacement inherits the existing external-memory charge.
+		}
+	}
+	else
+	{
+		auto const [inserted_position, inserted] = objects_.try_emplace(id, std::move(wrapped));
+		if (!inserted)
+		{
+			throw std::runtime_error("duplicate native wrapper registration");
+		}
+		position = inserted_position;
 	}
 	auto& slot = position->second;
 	auto& entry = *slot.receipt;
 	slot.wrapper.Reset(isolate_, obj);
-	entry.registration->owner.template emplace<pointer_type>(object);
+	if (replaced)
+	{
+		entry.registration->owner = std::move(replaced->registration->owner);
+	}
+	else
+	{
+		entry.registration->owner.template emplace<pointer_type>(object);
+	}
 	entry.registration->registry = this;
 #if V8PP_ENABLE_MANAGED_WRAPPERS
 	if (managed_wrappers_)
@@ -457,10 +525,11 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 	else
 #endif
 	{
-		to_local(isolate_, entry.portable_cell)->SetInternalField(0, new_external(isolate_, entry.registration));
+		portable_cell->SetInternalField(0, portable_registration);
 	}
 	// Rehash preserves the inline handle's address; detach unlinks it before erasure.
 	entry.make_weak(slot.wrapper);
+	if (replaced) reset_object(std::move(replaced));
 	if (size)
 	{
 		increase_allocated_memory(size);
@@ -470,7 +539,44 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_this(v8::Local<v8:
 }
 
 template<typename Traits>
-V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_type const& object, size_t size)
+V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_external(pointer_type const& object, size_t size)
+{
+	if constexpr (std::same_as<Traits, shared_ptr_traits>)
+	{
+		auto const position = size ? objects_.find(Traits::pointer_id(object)) : objects_.end();
+		if (position != objects_.end())
+		{
+			auto& receipt = *position->second.receipt;
+			auto const& owner = std::get<pointer_type>(receipt.registration->owner);
+			if (!receipt.previous || receipt.replacement || !object.use_count() ||
+				(receipt.size && receipt.size != size) ||
+				object.owner_before(owner) || owner.owner_before(object))
+			{
+				throw std::runtime_error(class_name() + " duplicate object " + pointer_str(receipt.id));
+			}
+			native_dispatch_scope dispatch(isolate_);
+			auto self = shared_from_this();
+			external_replacement replacement(receipt);
+			v8::Local<v8::Object> result;
+			try
+			{
+				result = wrap_object(object, size, &replacement);
+			}
+			catch (...)
+			{
+				replacement.cancel();
+				throw;
+			}
+			replacement.cancel();
+			return result;
+		}
+	}
+	return wrap_object(object, size);
+}
+
+template<typename Traits>
+V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(
+	pointer_type const& object, size_t size, external_replacement const* replacement)
 {
 	if (!object)
 	{
@@ -487,7 +593,7 @@ V8PP_IMPL v8::Local<v8::Object> object_registry<Traits>::wrap_object(pointer_typ
 	v8::Local<v8::Object> obj;
 	if (class_function_template()->GetFunction(context).ToLocal(&func) && func->NewInstance(context).ToLocal(&obj))
 	{
-		return scope.Escape(wrap_this(obj, object, size));
+		return scope.Escape(wrap_this(obj, object, size, replacement));
 	}
 
 	return {};
@@ -643,6 +749,10 @@ V8PP_IMPL void object_registry<Traits>::reset_object(std::unique_ptr<wrapped_obj
 	if constexpr (std::is_same_v<pointer_type, void*>)
 	{
 		if (!size) return;
+	}
+	else if (!object && !size)
+	{
+		return;
 	}
 	defer_native_destruction(isolate_, [isolate = isolate_, destroy = dtor_, object = std::move(object), size]
 		{

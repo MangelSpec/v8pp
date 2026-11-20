@@ -127,8 +127,7 @@ public:
 	v8::Local<v8::Object> find_v8_object(pointer_type const& ptr) const;
 	v8::Local<v8::Object> find_v8_object_by_id(object_id const& id) const;
 
-	v8::Local<v8::Object> wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, size_t size);
-	v8::Local<v8::Object> wrap_object(pointer_type const& object, size_t size);
+	v8::Local<v8::Object> wrap_external(pointer_type const& object, size_t size);
 	v8::Local<v8::Object> wrap_object(v8::FunctionCallbackInfo<v8::Value> const& args);
 
 	template<typename Create>
@@ -159,6 +158,8 @@ public:
 	std::unordered_map<std::string, std::function<v8::Local<v8::Value>(v8::Isolate*, pointer_type)>> const_properties;
 
 private:
+	struct external_replacement;
+
 	struct wrapped_object final : weak_wrapper
 	{
 		wrapped_object(object_registry& registry, object_id id, size_t size);
@@ -167,6 +168,7 @@ private:
 		object_registry& registry;
 		object_id id;
 		size_t size; // 0 for referenced objects
+		external_replacement const* replacement = nullptr;
 		wrapper_registration* registration = nullptr;
 		std::unique_ptr<wrapper_registration> portable_registration;
 		v8::Global<v8::Object> portable_cell;
@@ -177,6 +179,21 @@ private:
 #endif
 	};
 
+	struct external_replacement
+	{
+		explicit external_replacement(wrapped_object& receipt);
+
+		wrapped_object* find() const;
+		void cancel() const;
+
+		object_registry& registry;
+		object_id const id;
+	};
+
+	v8::Local<v8::Object> wrap_this(v8::Local<v8::Object> obj, pointer_type const& object, size_t size,
+		external_replacement const* replacement = nullptr);
+	v8::Local<v8::Object> wrap_object(pointer_type const& object, size_t size,
+		external_replacement const* replacement = nullptr);
 	void detach_object(object_id id);
 	void reset_object(std::unique_ptr<wrapped_object> wrapped);
 	bool apply_const_properties(v8::Local<v8::Object> obj, pointer_type const& ext);
@@ -1135,7 +1152,7 @@ public:
 	static v8::Local<v8::Object> reference_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
 		detail::external_data::result_scope::check(isolate);
-		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).wrap_object(ext, 0);
+		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).wrap_external(ext, 0);
 	}
 
 	/// Remove external reference from JavaScript
@@ -1150,7 +1167,7 @@ public:
 	static v8::Local<v8::Object> import_external(v8::Isolate* isolate, object_pointer_type const& ext)
 	{
 		detail::external_data::result_scope::check(isolate);
-		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).wrap_object(ext, Traits::object_size(ext));
+		return detail::classes::find<Traits>(isolate, detail::type_id<T>()).wrap_external(ext, Traits::object_size(ext));
 	}
 
 	/// Get wrapped object from V8 value, may return nullptr on fail.
